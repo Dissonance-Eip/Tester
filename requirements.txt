@@ -1,0 +1,19 @@
+# Music Perturbation Tester — Python dependencies
+# Python 3.11.9.  torch + torchaudio are installed separately in setup.sh.
+
+# ── Models ──────────────────────────────────────────────────
+faster-whisper                # Whisper transcription (CTranslate2-backed)
+transformers>=4.31.0          # MERT loader (via AutoModel)
+huggingface_hub               # model downloads (transitive but pinned)
+accelerate                    # required by transformers for device placement
+nnAudio                       # required by MERT's spectrogram frontend
+maest @ git+https://github.com/palonso/MAEST.git   # Discogs genre classifier
+
+# ── Audio I/O ───────────────────────────────────────────────
+soundfile                     # primary loader used in tester/audio.py
+librosa                       # MAEST uses it internally
+av==14.1.0                    # PyAV — pinned so it doesn't try to build from source
+
+# ── Math / array libs ───────────────────────────────────────
+numpy
+einops                        # used inside the MERT model code (trust_remote_code)

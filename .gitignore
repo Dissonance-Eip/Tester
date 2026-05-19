@@ -1,0 +1,9 @@
+venv/
+__pycache__/
+*.pyc
+.python-version
+results.json
+results_good.json
+sounds/*.wav
+sounds/*.mp3
+.DS_Store
