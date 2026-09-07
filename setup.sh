@@ -18,7 +18,7 @@ error() { echo -e "${RED}[ERROR]${NC} $1"; exit 1; }
 log "Checking system..."
 [[ "$(uname)"    != "Darwin" ]] && error "macOS only."
 [[ "$(uname -m)" != "arm64"  ]] && error "Apple Silicon (M1/M2/M3) required."
-log "macOS Apple Silicon ✅"
+log "macOS Apple Silicon."
 
 # ── 1. Xcode Command Line Tools ──────────────────────────────
 log "Checking Xcode Command Line Tools..."
@@ -29,7 +29,7 @@ if ! xcode-select -p &>/dev/null; then
     read -r -p "  Press Enter once the Xcode CLT installation has completed... "
     xcode-select -p &>/dev/null || error "Xcode Command Line Tools still not found. Re-run after installing."
 fi
-log "Xcode Command Line Tools ✅"
+log "Xcode Command Line Tools ready."
 
 # ── 2. Homebrew ───────────────────────────────────────────────
 log "Checking Homebrew..."
@@ -45,7 +45,7 @@ fi
 if ! grep -q "brew shellenv" ~/.zprofile 2>/dev/null; then
     echo 'eval "$(/opt/homebrew/bin/brew shellenv)"' >> ~/.zprofile
 fi
-log "Homebrew ✅"
+log "Homebrew ready."
 
 # ── 3. Core system packages ───────────────────────────────────
 log "Installing system packages..."
@@ -56,7 +56,7 @@ for pkg in "${BREW_PKGS[@]}"; do
         brew install "$pkg" || error "Failed to install $pkg."
     fi
 done
-log "System packages ✅"
+log "System packages ready."
 
 # ── 4. pyenv + Python 3.11.9 ─────────────────────────────────
 export PYENV_ROOT="$HOME/.pyenv"
@@ -89,7 +89,7 @@ if ! pyenv versions 2>/dev/null | grep -q "$REQUIRED_PYTHON"; then
 fi
 pyenv local "$REQUIRED_PYTHON"
 PYTHON="$(pyenv which python3)"
-log "Python $REQUIRED_PYTHON at $PYTHON ✅"
+log "Python $REQUIRED_PYTHON at $PYTHON."
 
 # ── 5. Virtual environment ───────────────────────────────────
 log "Setting up virtual environment..."
@@ -99,7 +99,7 @@ if [[ -d "venv" ]]; then
 fi
 "$PYTHON" -m venv venv
 source venv/bin/activate
-log "venv ✅"
+log "venv ready."
 
 # ── 6. Python dependencies ───────────────────────────────────
 log "Installing Python dependencies..."
@@ -117,7 +117,7 @@ pip install torch torchaudio || error "Failed to install torch/torchaudio."
 log "Installing remaining dependencies..."
 pip install --prefer-binary -r requirements.txt || error "Failed to install from requirements.txt."
 
-log "Dependencies ✅"
+log "Dependencies ready."
 
 # ── 7. MPS fallback ──────────────────────────────────────────
 log "Setting PYTORCH_ENABLE_MPS_FALLBACK..."
@@ -129,7 +129,7 @@ if ! grep -q "PYTORCH_ENABLE_MPS_FALLBACK" ~/.zshrc 2>/dev/null; then
     } >> ~/.zshrc
 fi
 export PYTORCH_ENABLE_MPS_FALLBACK=1
-log "MPS fallback ✅"
+log "MPS fallback ready."
 
 # ── 8. Sanity check ──────────────────────────────────────────
 log "Running sanity check..."

@@ -29,7 +29,7 @@ echo ""
 if [[ -d "venv" ]]; then
     log "Removing venv..."
     rm -rf venv
-    log "venv removed ✅"
+    log "venv removed."
 else
     log "No venv found — skipping."
 fi
@@ -37,7 +37,7 @@ fi
 # Remove pyenv local version pin
 if [[ -f ".python-version" ]]; then
     rm -f .python-version
-    log ".python-version removed ✅"
+    log ".python-version removed."
 fi
 
 # ── 2. HuggingFace model cache ───────────────────────────────
@@ -76,7 +76,7 @@ if $found_any; then
             model_path="$HF_CACHE/$model"
             if [[ -d "$model_path" ]]; then
                 rm -rf "$model_path"
-                log "$model removed ✅"
+                log "$model removed."
             fi
         done
     else
@@ -93,7 +93,7 @@ if [[ -d "$PYENV_PYTHON" ]]; then
     size=$(du -sh "$PYENV_PYTHON" 2>/dev/null | cut -f1)
     if confirm "Remove pyenv Python 3.11.9 ($size)? Only do this if nothing else uses it."; then
         rm -rf "$PYENV_PYTHON"
-        log "Python 3.11.9 removed ✅"
+        log "Python 3.11.9 removed."
     else
         log "Python 3.11.9 kept."
     fi

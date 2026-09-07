@@ -12,13 +12,13 @@ from typing import Callable, List, Tuple
 
 
 def _check(label: str, fn: Callable[[], None]) -> bool:
-    """Run ``fn``; print ✅ if it succeeds, ❌ with the error if it doesn't."""
+    """Run ``fn``; print the label if it succeeds, or the error if it doesn't."""
     try:
         fn()
-        print(f"  ✅ {label}")
+        print(f"  {label}")
         return True
     except Exception as exc:
-        print(f"  ❌ {label} — {exc}")
+        print(f"  {label} — {exc}")
         return False
 
 
@@ -53,10 +53,10 @@ def main() -> int:
 
     print("───────────────────────────────────────────────")
     if passed == total:
-        print(f"  All {total}/{total} checks passed — ready to go! 🎉\n")
+        print(f"  All {total}/{total} checks completed.\n")
         return 0
 
-    print(f"  {passed}/{total} checks passed — fix the ❌ items above then re-run.\n")
+    print(f"  {passed}/{total} checks completed — see items above then re-run.\n")
     return 1
 
 

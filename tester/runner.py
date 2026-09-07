@@ -144,9 +144,9 @@ def _assemble_results(**kw) -> Dict[str, Any]:
         "verdict": {
             "overall_pass":   overall_pass,
             "summary": (
-                "✅ Effective poisoning — inaudible to humans, fools AI"
+                "Inaudible to humans, confusing to AI."
                 if overall_pass
-                else "❌ Not effective — see failing metrics below"
+                else "See individual metrics below."
             ),
             "metrics_passed": int(snr_ok) + int(lyric_ok) + int(genre_ok),
             "metrics_total":  3,
@@ -171,9 +171,9 @@ def _assemble_results(**kw) -> Dict[str, Any]:
             "original_lyrics":  kw["orig_lyrics"],
             "perturbed_lyrics": kw["pert_lyrics"],
             "interpretation": (
-                "Whisper transcribes significantly different lyrics — successful lyric poisoning."
+                "Whisper transcribes significantly different lyrics."
                 if lyric_ok
-                else "Whisper still reads the lyrics correctly — perturbation does not fool transcription."
+                else "Whisper transcribes the same lyrics."
             ),
         },
         "ai_genre": {
@@ -196,9 +196,9 @@ def _assemble_results(**kw) -> Dict[str, Any]:
                 "pass":         genre_ok,
             },
             "interpretation": (
-                "AI music encoder sees a meaningfully different track — successful encoder poisoning."
+                "AI music encoder sees a meaningfully different track."
                 if genre_ok
-                else "AI music encoder sees essentially the same track — perturbation does not target AI features."
+                else "AI music encoder sees essentially the same track."
             ),
         },
     }

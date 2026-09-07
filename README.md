@@ -69,7 +69,7 @@ python3 run.py original.wav poisoned.wav
 ```
 
 Outputs:
-- A terminal summary box with pass / fail per metric
+- A terminal summary box with the metric values
 - `results.json` with the full structured report
 
 Sanity-check the pipeline by passing the same file twice — SNR should be

@@ -70,4 +70,4 @@ def load_all() -> None:
     whisper()
     mert()
     maest()
-    print("  Models ready ✅\n")
+    print("  Models ready.\n")
