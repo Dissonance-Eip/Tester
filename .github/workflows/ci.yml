@@ -20,7 +20,7 @@ jobs:
       - uses: actions/checkout@v5
       - uses: actions/setup-python@v6
         with:
-          python-version: "3.11.9"
+          python-version: "3.11"   # only runs the ruff binary
       - name: Install ruff (version pinned in requirements.txt)
         run: pip install "$(grep '^ruff==' requirements.txt)"
       - run: ruff check --output-format=github .
