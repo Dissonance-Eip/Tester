@@ -98,3 +98,50 @@ def test_silent_original_and_silent_perturbed_is_infinite(write_wav):
 
     assert result.original_silent is True
     assert result.snr_db == math.inf
+
+
+# ── Shared primitives (issue #4) ─────────────────────────────
+def test_rms_of_a_constant_is_its_magnitude():
+    import torch
+
+    assert snr.rms(torch.full((100,), -0.25)).item() == pytest.approx(0.25)
+
+
+def test_rms_returns_a_tensor_in_the_input_dtype():
+    import torch
+
+    value = snr.rms(torch.ones(10, dtype=torch.float32))
+
+    assert isinstance(value, torch.Tensor)
+    assert value.dtype == torch.float32
+
+
+def test_snr_db_of_identical_signals_is_infinite():
+    import torch
+
+    signal = torch.from_numpy(sine(1.0)).float()
+
+    assert snr.snr_db(signal, signal) == math.inf
+
+
+def test_snr_db_of_known_noise():
+    import torch
+
+    clean = sine(1.0)
+    noisy = clean + noise_at_snr(clean, 20.0)
+
+    value = snr.snr_db(torch.from_numpy(clean).float(), torch.from_numpy(noisy).float())
+
+    assert value == pytest.approx(20.0, abs=0.01)
+
+
+def test_compute_whole_window_snr_matches_snr_db(write_wav):
+    import torch
+
+    clean = sine(1.0)
+    noisy = clean + noise_at_snr(clean, 25.0)
+
+    result = snr.compute(write_wav("clean", clean), write_wav("noisy", noisy))
+
+    expected = snr.snr_db(torch.from_numpy(clean).float(), torch.from_numpy(noisy).float())
+    assert result.snr_db == pytest.approx(expected, abs=1e-4)

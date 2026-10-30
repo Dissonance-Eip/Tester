@@ -22,8 +22,9 @@ from typing import List, Tuple
 import torch
 
 from .. import models
-from ..audio import load, to_mono, resample, trim
-from ..config import DEVICE, MAEST_SR, MERT_SR, MAX_AUDIO_SECONDS
+from ..audio import load_mono
+from ..config import MAEST_SR, MAX_AUDIO_SECONDS
+from ..embedding import cosine_distance, mert_embed
 
 
 # ── MAEST: discrete genre labels ─────────────────────────────
@@ -42,10 +43,7 @@ def classify(audio_path: str, top_k: int = 5) -> List[Tuple[str, float]]:
     """
     maest_model = models.maest()
 
-    waveform, sr = load(audio_path)
-    waveform = to_mono(waveform)
-    waveform = trim(waveform, sr, MAX_AUDIO_SECONDS)
-    waveform = resample(waveform, sr, MAEST_SR)
+    waveform, _ = load_mono(audio_path, MAEST_SR, MAX_AUDIO_SECONDS)
 
     audio = waveform.unsqueeze(0)  # [1, T] — kept on CPU; see models.maest()
 
@@ -62,7 +60,8 @@ def fingerprint(audio_path: str) -> torch.Tensor:
 
     Averages every transformer hidden layer (not just the last) for a
     richer representation, then mean-pools over time to produce a fixed
-    1-D vector.
+    1-D vector. The embedding is ``embedding.mert_embed``, the same one
+    ``attack/`` optimises against.
 
     Args:
         audio_path: Path to the audio file.
@@ -71,22 +70,10 @@ def fingerprint(audio_path: str) -> torch.Tensor:
         1-D float tensor on CPU representing the music's latent features.
         Same input always produces the same fingerprint.
     """
-    mert_model, mert_extractor = models.mert()
-
-    waveform, sr = load(audio_path)
-    waveform = to_mono(waveform)
-    waveform = trim(waveform, sr, MAX_AUDIO_SECONDS)
-    waveform = resample(waveform, sr, MERT_SR)
-
-    inputs = mert_extractor(
-        waveform.numpy(), sampling_rate=MERT_SR, return_tensors="pt"
-    )
-    inputs = {k: v.to(DEVICE) for k, v in inputs.items()}
+    waveform, sr = load_mono(audio_path, seconds=MAX_AUDIO_SECONDS)
 
     with torch.no_grad():
-        outputs   = mert_model(**inputs, output_hidden_states=True)
-        hidden    = torch.stack(outputs.hidden_states)     # [L, 1, T, D]
-        embedding = hidden.mean(dim=(0, 2)).squeeze(0)     # [D]
+        embedding = mert_embed(waveform, sr)
 
     return embedding.cpu()
 
@@ -103,6 +90,4 @@ def confusion(fp1: torch.Tensor, fp2: torch.Tensor) -> float:
         2 = exact opposites. For our purposes anything above ~0.3 means
         a music-understanding model would see the two files as different.
     """
-    return 1.0 - torch.nn.functional.cosine_similarity(
-        fp1.unsqueeze(0), fp2.unsqueeze(0)
-    ).item()
+    return cosine_distance(fp1, fp2).item()

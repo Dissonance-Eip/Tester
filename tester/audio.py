@@ -6,7 +6,7 @@ system (which changes between PyTorch versions and currently requires
 `torchcodec`). All functions are pure and stateless.
 """
 
-from typing import Tuple
+from typing import Optional, Tuple
 
 import torch
 import torchaudio
@@ -72,3 +72,29 @@ def trim(waveform: torch.Tensor, sr: int, seconds: int) -> torch.Tensor:
         Trimmed tensor (returns the original if it was already short enough).
     """
     return waveform[..., : sr * seconds]
+
+
+def load_mono(
+    path: str, sr: Optional[int] = None, seconds: Optional[int] = None
+) -> Tuple[torch.Tensor, int]:
+    """Load a file as mono, keep its first ``seconds`` and resample to ``sr``.
+
+    The one load chain shared by the metrics and ``attack/``: load, mix
+    down to mono, trim at the native rate, then resample.
+
+    Args:
+        path:    Path to a WAV / FLAC / OGG file.
+        sr:      Target sample rate in Hz; ``None`` keeps the file's rate.
+        seconds: Keep only the first ``seconds``; ``None`` keeps everything.
+
+    Returns:
+        A tuple ``(mono, sample_rate)``: a 1D ``float32`` tensor and the
+        rate it is at (``sr`` if given, else the file's own rate).
+    """
+    waveform, native_sr = load(path)
+    mono = to_mono(waveform)
+    if seconds is not None:
+        mono = trim(mono, native_sr, seconds)
+    if sr is None:
+        return mono, native_sr
+    return resample(mono, native_sr, sr), sr

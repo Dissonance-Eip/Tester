@@ -56,3 +56,14 @@ SNR_WARN: float = 20.0   # borderline; below this is clearly audible
 # Confusion scores are in [0, 1]; higher = AI is more confused.
 LYRICS_CONFUSION_GOOD: float = 0.5   # ≥50% word divergence = success
 GENRE_CONFUSION_GOOD:  float = 0.3   # cosine distance ≥ 0.3 = success
+
+# ── Adversarial attack (attack/) ─────────────────────────────
+# STFT of attack/optimizer.py's perceptual projection. It only approximates
+# core's MaskingStage (core/include/audio/MaskingStage.hpp): the frame is the
+# same 2048-point Hann FFT, but the hop is 512 (core: 1024), the ceiling is
+# the song's own magnitude × ATTACK_MASK_SCALE (core: Bark-band
+# psychoacoustic thresholds), and it clamps |δ| per bin (core: the per-bin
+# magnitude difference between perturbed and clean).
+ATTACK_STFT_FRAME: int   = 2048   # same frame size as core's MaskingStage
+ATTACK_STFT_HOP:   int   = 512    # core uses 1024 (50% overlap)
+ATTACK_MASK_SCALE: float = 0.15   # ceiling = song magnitude × this
