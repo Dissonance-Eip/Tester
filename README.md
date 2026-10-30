@@ -12,14 +12,21 @@ on the perturbation algorithm with real numbers.
 
 | Metric | Tool | A good poison... |
 |--------|------|------------------|
-| **Human audibility (SNR)** | RMS comparison | ≥ 30 dB — listener can't hear the perturbation |
-| **Lyrics confusion** | Whisper `large-v3-turbo` | ≥ 50% — Whisper transcribes the wrong words |
+| **Human audibility (SNR)** | RMS comparison over the first 60 s (what the models see), per 0.5 s frame | minimum frame SNR ≥ 30 dB — listener can't hear the perturbation |
+| **Lyrics confusion** | Whisper `large-v3-turbo`, word edit distance (case and punctuation ignored) | ≥ 50% — Whisper transcribes the wrong words |
 | **Genre label** | MAEST (Discogs 400-tag) | label changes — AI calls it a different genre |
 | **Encoder confusion** | MERT v1 330M | ≥ 30% cosine distance — music-understanding AI sees a different track |
 
-All three confusion metrics must move while SNR stays high. If SNR drops,
-humans hear artifacts; if the AI scores don't move, the noise isn't
-actually adversarial.
+The verdict passes only when all four rows pass: the lyrics, genre label
+and encoder must all move while SNR stays high. `results.json` reports
+`metrics_passed` out of `metrics_total` (4), and the console prints the
+verdict. If SNR drops, humans hear artifacts; if the AI scores don't move,
+the noise isn't actually adversarial.
+
+SNR is reported for the whole window and per frame (segmental min and
+mean); the gate uses the minimum, so a short loud burst can't hide behind
+a quiet average. If the original is silent, SNR is undefined: any
+perturbation over it reports `-inf` and fails.
 
 ---
 
@@ -73,10 +80,17 @@ Outputs:
 - `results.json` with the full structured report
 
 Sanity-check the pipeline by passing the same file twice — SNR should be
-`inf dB`, confusions near 0%, genre label unchanged:
+`inf dB`, confusions near 0%, genre label unchanged (so the verdict is FAIL):
 
 ```bash
 python3 run.py sounds/sound.wav sounds/sound.wav
+```
+
+Run the unit tests (small synthetic signals, no model downloads needed
+beyond the installed packages):
+
+```bash
+python3 -m pytest tests
 ```
 
 ---

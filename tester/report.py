@@ -20,6 +20,8 @@ def print_summary(results: Dict[str, Any]) -> None:
     genre_block = results["ai_genre"]
 
     snr_db    = snr_block["snr_db"]
+    snr_min   = snr_block["segmental_snr_db"]["min"]
+    verdict   = results["verdict"]
 
     lyric_pct = lyric_block["confusion_score"]
 
@@ -30,10 +32,13 @@ def print_summary(results: Dict[str, Any]) -> None:
     print("\n" + "═" * _WIDTH)
     print("  POISONING EFFECTIVENESS")
     print("═" * _WIDTH)
-    print(f"  Human quality  (SNR):    {snr_db} dB")
+    print(f"  Human quality  (SNR):    {snr_db} dB  (segmental min {snr_min} dB)")
     print(f"  Lyrics confused:         {lyric_pct:.2%}")
     print(f"  Genre label:             {label_orig} → {label_pert}")
     print(f"  Encoder confusion:       {enc_score:.2%}")
+    print("─" * _WIDTH)
+    print(f"  Verdict:                 {'PASS' if verdict['overall_pass'] else 'FAIL'}  "
+          f"({verdict['metrics_passed']}/{verdict['metrics_total']} metrics passed)")
     print("═" * _WIDTH + "\n")
 
 

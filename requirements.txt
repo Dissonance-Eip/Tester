@@ -17,3 +17,6 @@ av==14.1.0                    # PyAV — pinned so it doesn't try to build from 
 # ── Math / array libs ───────────────────────────────────────
 numpy
 einops                        # used inside the MERT model code (trust_remote_code)
+
+# ── Tests ───────────────────────────────────────────────────
+pytest
