@@ -7,3 +7,8 @@ results_good.json
 sounds/*.wav
 sounds/*.mp3
 .DS_Store
+.coverage
+htmlcov/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/

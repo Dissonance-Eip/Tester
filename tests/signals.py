@@ -5,7 +5,9 @@ import numpy as np
 SAMPLE_RATE = 8_000
 
 
-def sine(seconds: float, sr: int = SAMPLE_RATE, freq: float = 440.0, amp: float = 0.5) -> np.ndarray:
+def sine(
+    seconds: float, sr: int = SAMPLE_RATE, freq: float = 440.0, amp: float = 0.5
+) -> np.ndarray:
     t = np.arange(int(seconds * sr)) / sr
     return amp * np.sin(2 * np.pi * freq * t)
 

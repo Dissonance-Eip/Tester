@@ -7,13 +7,13 @@ it into something a human (the terminal summary) and a machine
 """
 
 import json
-from typing import Any, Dict
+from typing import Any
 
 # Decorative widths
 _WIDTH = 54
 
 
-def print_summary(results: Dict[str, Any]) -> None:
+def print_summary(results: dict[str, Any]) -> None:
     """Print the final summary box to stdout."""
     snr_block   = results["human_perception"]
     lyric_block = results["ai_lyrics"]
@@ -42,7 +42,7 @@ def print_summary(results: Dict[str, Any]) -> None:
     print("═" * _WIDTH + "\n")
 
 
-def save_json(results: Dict[str, Any], path: str) -> None:
+def save_json(results: dict[str, Any], path: str) -> None:
     """Write the results dict to ``path`` as pretty-printed JSON."""
     with open(path, "w") as f:
         json.dump(results, f, indent=2, ensure_ascii=False)

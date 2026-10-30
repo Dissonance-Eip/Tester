@@ -17,17 +17,15 @@ A successful poisoning attack should change BOTH:
 the MAEST label *and* the MERT embedding.
 """
 
-from typing import List, Tuple
-
 import torch
 
 from .. import models
-from ..audio import load, to_mono, resample, trim
-from ..config import DEVICE, MAEST_SR, MERT_SR, MAX_AUDIO_SECONDS
+from ..audio import load, resample, to_mono, trim
+from ..config import DEVICE, MAEST_SR, MAX_AUDIO_SECONDS, MERT_SR
 
 
 # ── MAEST: discrete genre labels ─────────────────────────────
-def classify(audio_path: str, top_k: int = 5) -> List[Tuple[str, float]]:
+def classify(audio_path: str, top_k: int = 5) -> list[tuple[str, float]]:
     """Classify an audio file into Discogs genres.
 
     Args:
@@ -52,7 +50,8 @@ def classify(audio_path: str, top_k: int = 5) -> List[Tuple[str, float]]:
     with torch.no_grad():
         activations, labels = maest_model.predict_labels(audio)
 
-    ranked = sorted(zip(labels, activations.tolist()), key=lambda x: x[1], reverse=True)
+    scored = zip(labels, activations.tolist(), strict=True)
+    ranked = sorted(scored, key=lambda x: x[1], reverse=True)
     return ranked[:top_k]
 
 

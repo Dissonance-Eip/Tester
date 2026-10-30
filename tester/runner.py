@@ -3,25 +3,37 @@ Pipeline orchestration.
 
 ``run(original, perturbed)`` is the single public entry point — it loads
 every model, runs every metric, and returns the assembled results.
-Side effects (console output, JSON file) are delegated to ``report``.
+The result schema lives in ``result``; side effects (console output, JSON
+file) are delegated to ``report``.
 """
 
-import math
-from typing import Any, Dict
+from typing import Any, NamedTuple
 
-from . import models, provenance
-from .config import (
-    GENRE_CONFUSION_GOOD,
-    LYRICS_CONFUSION_GOOD,
-    SNR_GOOD,
-    SNR_WARN,
-    SNR_WINDOW_SECONDS,
-)
+from . import models
+from .config import SNR_WINDOW_SECONDS
 from .metrics import genre, lyrics, snr
 from .report import print_summary, save_json
+from .result import Genres, RunResult, snr_label
+
+DEFAULT_OUTPUT = "results.json"
+_PREVIEW_CHARS = 120
 
 
-def run(original_path: str, perturbed_path: str) -> Dict[str, Any]:
+class _LyricsStep(NamedTuple):
+    original: str
+    perturbed: str
+    confusion: float
+
+
+class _GenreStep(NamedTuple):
+    original: Genres
+    perturbed: Genres
+    encoder_confusion: float
+
+
+def run(
+    original_path: str, perturbed_path: str, output_path: str = DEFAULT_OUTPUT
+) -> dict[str, Any]:
     """Evaluate a perturbation against the original audio.
 
     Runs three metrics:
@@ -36,208 +48,78 @@ def run(original_path: str, perturbed_path: str) -> Dict[str, Any]:
     Args:
         original_path:  Path to the clean reference audio.
         perturbed_path: Path to the poisoned audio.
+        output_path:    Where to write the JSON report.
 
     Returns:
-        A structured results dictionary. Also writes ``results.json`` and
-        prints a summary to stdout as side effects.
+        A structured results dictionary. Also writes it to ``output_path``
+        and prints a summary to stdout as side effects.
     """
     print("\nLoading models...")
     models.load_all()
     print(f"Evaluating poison: {original_path}  →  {perturbed_path}\n")
 
-    # ── 1. SNR (human audibility) ────────────────────────────
-    print("── Step 1/3: Human perceptual quality (SNR) ────")
-    snr_result = snr.compute(original_path, perturbed_path)
-    snr_label = _snr_label(snr_result.segmental_min_db)
-    print(f"  SNR: {snr_result.snr_db:.1f} dB over the first {SNR_WINDOW_SECONDS} s")
-    print(f"  Segmental SNR: min {snr_result.segmental_min_db:.1f} dB, "
-          f"mean {snr_result.segmental_mean_db:.1f} dB  ({snr_label})")
-    if snr_result.original_silent:
-        print("  Original is silent in the window: SNR is undefined, counted as a fail.")
-    print()
+    snr_result = _snr_step(original_path, perturbed_path)
+    lyrics_result = _lyrics_step(original_path, perturbed_path)
+    genre_result = _genre_step(original_path, perturbed_path)
 
-    # ── 2. Lyrics confusion (Whisper) ────────────────────────
-    print("── Step 2/3: AI lyrics confusion (Whisper) ─────")
-    orig_lyrics = lyrics.transcribe(original_path)
-    pert_lyrics = lyrics.transcribe(perturbed_path)
-    lyric_conf  = lyrics.confusion(orig_lyrics, pert_lyrics)
-    print(f"  Original:  {orig_lyrics[:120]}")
-    print(f"  Perturbed: {pert_lyrics[:120]}")
-    print(f"  Confusion: {lyric_conf:.2%}\n")
-
-    # ── 3. Genre classification + encoder confusion ──────────
-    print("── Step 3/3: AI genre classification + encoder ─")
-    print("  Classifying original (MAEST)...")
-    orig_genres = genre.classify(original_path)
-    print("  Classifying perturbed (MAEST)...")
-    pert_genres = genre.classify(perturbed_path)
-
-    print("  Original  genres:", _format_genres(orig_genres))
-    print("  Perturbed genres:", _format_genres(pert_genres))
-
-    print("\n  Computing encoder confusion (MERT)...")
-    fp_orig    = genre.fingerprint(original_path)
-    fp_pert    = genre.fingerprint(perturbed_path)
-    genre_conf = genre.confusion(fp_orig, fp_pert)
-    print(f"  Encoder confusion: {genre_conf:.2%}\n")
-
-    # ── Assemble result ──────────────────────────────────────
-    results = _assemble_results(
-        original_path  = original_path,
-        perturbed_path = perturbed_path,
-        snr_db         = snr_result.snr_db,
-        snr_segmental_min_db  = snr_result.segmental_min_db,
-        snr_segmental_mean_db = snr_result.segmental_mean_db,
-        snr_original_silent   = snr_result.original_silent,
-        snr_label      = snr_label,
-        orig_lyrics    = orig_lyrics,
-        pert_lyrics    = pert_lyrics,
-        lyric_conf     = lyric_conf,
-        orig_genres    = orig_genres,
-        pert_genres    = pert_genres,
-        genre_conf     = genre_conf,
-    )
+    results = RunResult(
+        original_path=original_path,
+        perturbed_path=perturbed_path,
+        snr=snr_result,
+        original_lyrics=lyrics_result.original,
+        perturbed_lyrics=lyrics_result.perturbed,
+        lyrics_confusion=lyrics_result.confusion,
+        original_genres=genre_result.original,
+        perturbed_genres=genre_result.perturbed,
+        encoder_confusion=genre_result.encoder_confusion,
+    ).to_dict()
 
     print_summary(results)
-    save_json(results, "results.json")
+    save_json(results, output_path)
     return results
 
 
-# ── Helpers ──────────────────────────────────────────────────
-def _snr_label(snr_db: float) -> str:
-    """Return a human-readable label for an SNR value."""
-    if snr_db >= SNR_GOOD:
-        return "imperceptible"
-    if snr_db >= SNR_WARN:
-        return "borderline"
-    return "noticeable"
+# ── Steps ────────────────────────────────────────────────────
+def _snr_step(original_path: str, perturbed_path: str) -> snr.SnrResult:
+    print("── Step 1/3: Human perceptual quality (SNR) ────")
+    result = snr.compute(original_path, perturbed_path)
+    print(f"  SNR: {result.snr_db:.1f} dB over the first {SNR_WINDOW_SECONDS} s")
+    print(f"  Segmental SNR: min {result.segmental_min_db:.1f} dB, "
+          f"mean {result.segmental_mean_db:.1f} dB  ({snr_label(result.segmental_min_db)})")
+    if result.original_silent:
+        print("  Original is silent in the window: SNR is undefined, counted as a fail.")
+    print()
+    return result
 
 
-def _db(value: float):
-    """Round a dB value for JSON; infinities become ``"inf"`` / ``"-inf"``."""
-    if math.isinf(value):
-        return "inf" if value > 0 else "-inf"
-    return round(value, 2)
+def _lyrics_step(original_path: str, perturbed_path: str) -> _LyricsStep:
+    print("── Step 2/3: AI lyrics confusion (Whisper) ─────")
+    original = lyrics.transcribe(original_path)
+    perturbed = lyrics.transcribe(perturbed_path)
+    confusion = lyrics.confusion(original, perturbed)
+    print(f"  Original:  {original[:_PREVIEW_CHARS]}")
+    print(f"  Perturbed: {perturbed[:_PREVIEW_CHARS]}")
+    print(f"  Confusion: {confusion:.2%}\n")
+    return _LyricsStep(original, perturbed, confusion)
 
 
-def _format_genres(genres) -> str:
+def _genre_step(original_path: str, perturbed_path: str) -> _GenreStep:
+    print("── Step 3/3: AI genre classification + encoder ─")
+    print("  Classifying original (MAEST)...")
+    original = genre.classify(original_path)
+    print("  Classifying perturbed (MAEST)...")
+    perturbed = genre.classify(perturbed_path)
+    print("  Original  genres:", _format_genres(original))
+    print("  Perturbed genres:", _format_genres(perturbed))
+
+    print("\n  Computing encoder confusion (MERT)...")
+    confusion = genre.confusion(
+        genre.fingerprint(original_path), genre.fingerprint(perturbed_path)
+    )
+    print(f"  Encoder confusion: {confusion:.2%}\n")
+    return _GenreStep(original, perturbed, confusion)
+
+
+def _format_genres(genres: Genres) -> str:
     """Pretty-print genre tuples for the console."""
     return "  ".join(f"{g} ({s:.0%})" for g, s in genres)
-
-
-def _assemble_results(**kw) -> Dict[str, Any]:
-    """Build the structured results dictionary saved to ``results.json``.
-
-    Kept here (and not in ``report``) so the runner remains the single
-    source of truth for the result schema.
-    """
-    import datetime
-    import os
-
-    from .config import ENCODER_MODEL, MAEST_ARCH, DEVICE, WHISPER_SIZE
-
-    snr_gate    = kw["snr_segmental_min_db"]   # quietest frame decides audibility
-    snr_ok      = snr_gate          >= SNR_GOOD
-    lyric_ok    = kw["lyric_conf"]  >= LYRICS_CONFUSION_GOOD
-    genre_ok    = kw["genre_conf"]  >= GENRE_CONFUSION_GOOD
-    label_changed = kw["orig_genres"][0][0] != kw["pert_genres"][0][0]
-
-    # Every success criterion listed in the README counts towards the verdict.
-    checks = {
-        "snr":           snr_ok,
-        "lyrics":        lyric_ok,
-        "encoder":       genre_ok,
-        "genre_label":   label_changed,
-    }
-    overall_pass = all(checks.values())
-
-    return {
-        "_about": (
-            "Audio poisoning effectiveness report. A successful perturbation is "
-            "inaudible to humans (high SNR) and confuses AI on both lyrics and genre."
-        ),
-        "run": {
-            "timestamp":      datetime.datetime.now().isoformat(timespec="seconds"),
-            "original_file":  os.path.abspath(kw["original_path"]),
-            "perturbed_file": os.path.abspath(kw["perturbed_path"]),
-            "device":         DEVICE,
-            "models": {
-                "lyrics_transcriber": WHISPER_SIZE,
-                "genre_classifier":   MAEST_ARCH,
-                "music_encoder":      ENCODER_MODEL,
-            },
-            "model_revisions": provenance.model_revisions(),
-            "versions":        provenance.package_versions(),
-        },
-        "verdict": {
-            "overall_pass":   overall_pass,
-            "summary": (
-                "Inaudible to humans, confusing to AI."
-                if overall_pass
-                else "See individual metrics below."
-            ),
-            "metrics_passed": sum(checks.values()),
-            "metrics_total":  len(checks),
-            "checks":         checks,
-        },
-        "human_perception": {
-            "_description": "How audible the perturbation is to a human listener.",
-            "window_seconds": SNR_WINDOW_SECONDS,
-            "snr_db":       _db(kw["snr_db"]),
-            "segmental_snr_db": {
-                "min":  _db(kw["snr_segmental_min_db"]),
-                "mean": _db(kw["snr_segmental_mean_db"]),
-            },
-            "gate":         "segmental_snr_db.min",
-            "original_silent": kw["snr_original_silent"],
-            "label":        kw["snr_label"],
-            "threshold":    {"good_above_db": SNR_GOOD, "warn_below_db": SNR_WARN},
-            "pass":         snr_ok,
-            "interpretation": (
-                "Original is silent; any perturbation over silence is audible."
-                if kw["snr_original_silent"] and not snr_ok else
-                "Imperceptible to a human listener."        if snr_gate >= SNR_GOOD else
-                "Borderline — some listeners may notice."   if snr_gate >= SNR_WARN else
-                "Clearly audible artifacts — humans hear the perturbation."
-            ),
-        },
-        "ai_lyrics": {
-            "_description":     "Does Whisper hear different words on the perturbed file?",
-            "confusion_score":  round(kw["lyric_conf"], 4),
-            "threshold":        {"good_above": LYRICS_CONFUSION_GOOD},
-            "pass":             lyric_ok,
-            "original_lyrics":  kw["orig_lyrics"],
-            "perturbed_lyrics": kw["pert_lyrics"],
-            "interpretation": (
-                "Whisper transcribes significantly different lyrics."
-                if lyric_ok
-                else "Whisper transcribes the same lyrics."
-            ),
-        },
-        "ai_genre": {
-            "_description": "Does AI genre classification and music encoding change?",
-            "label_classifier": {
-                "original_top_genres":  [
-                    {"genre": g, "confidence": round(s, 4)} for g, s in kw["orig_genres"]
-                ],
-                "perturbed_top_genres": [
-                    {"genre": g, "confidence": round(s, 4)} for g, s in kw["pert_genres"]
-                ],
-                "original_top":   kw["orig_genres"][0][0],
-                "perturbed_top":  kw["pert_genres"][0][0],
-                "label_changed":  label_changed,
-                "pass":           label_changed,
-            },
-            "encoder_confusion": {
-                "_description": "Cosine distance between MERT embeddings.",
-                "score":        round(kw["genre_conf"], 4),
-                "threshold":    {"good_above": GENRE_CONFUSION_GOOD},
-                "pass":         genre_ok,
-            },
-            "interpretation": (
-                "AI music encoder sees a meaningfully different track."
-                if genre_ok
-                else "AI music encoder sees essentially the same track."
-            ),
-        },
-    }

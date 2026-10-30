@@ -15,10 +15,17 @@ to that window and overstate how quiet it is.
 A single whole-window number can still hide a short, loud burst, so the
 window is also cut into ``SNR_SEGMENT_SECONDS`` frames (segmental SNR).
 The pass/fail gate uses the quietest frame (``segmental_min_db``).
+
+Layers, each usable on its own:
+
+* ``snr_db(original, perturbed)``     — one number from two equal-shape tensors
+* ``align(original, sr, perturbed, sr_perturbed)`` — match rate, length, channels
+* ``measure(original, perturbed, sr)`` — window + whole and segmental SNR
+* ``compute(original_path, perturbed_path)`` — load files, align, measure
 """
 
 import math
-from typing import List, NamedTuple
+from typing import NamedTuple
 
 import torch
 
@@ -38,57 +45,126 @@ class SnrResult(NamedTuple):
     original_silent: bool     # original is silent over the whole window
 
 
+def snr_db(original: torch.Tensor, perturbed: torch.Tensor) -> float:
+    """SNR in dB of ``perturbed`` against ``original``.
+
+    Args:
+        original:  Clean signal, any shape.
+        perturbed: Perturbed signal, same shape as ``original`` (use
+            ``align`` first for audio that differs in rate, length or
+            channels).
+
+    Returns:
+        ``inf`` when the two are identical. When ``original`` is silent
+        (RMS below ``SILENCE_RMS``) the ratio is undefined: ``inf`` if there
+        is no perturbation either, ``-inf`` if there is (any perturbation
+        over silence is audible).
+
+    Raises:
+        ValueError: if the shapes differ.
+    """
+    if original.shape != perturbed.shape:
+        raise ValueError(
+            f"shape mismatch: original {tuple(original.shape)} "
+            f"vs perturbed {tuple(perturbed.shape)}; align them first"
+        )
+    rms_orig = _rms(original.float())
+    rms_noise = _rms(original.float() - perturbed.float())
+    if rms_orig < SILENCE_RMS:
+        return math.inf if rms_noise < _NOISE_FREE_RMS else -math.inf
+    return _db(rms_orig, rms_noise)
+
+
+def align(
+    original: torch.Tensor,
+    sr: int,
+    perturbed: torch.Tensor,
+    sr_perturbed: int,
+) -> tuple[torch.Tensor, torch.Tensor]:
+    """Bring ``perturbed`` to the rate, length and channel count of ``original``.
+
+    The perturbed signal is resampled to ``sr``, both are cut to the shorter
+    length, and if the channel counts differ the perturbed signal is mixed
+    down to mono and broadcast to the original's channels.
+
+    Args:
+        original:     ``[channels, samples]`` tensor at ``sr``.
+        sr:           Sample rate of ``original`` in Hz.
+        perturbed:    ``[channels, samples]`` tensor at ``sr_perturbed``.
+        sr_perturbed: Sample rate of ``perturbed`` in Hz.
+
+    Returns:
+        ``(original, perturbed)`` as float tensors of equal shape at ``sr``.
+    """
+    perturbed = resample(perturbed, sr_perturbed, sr)
+
+    length = min(original.shape[-1], perturbed.shape[-1])
+    original = original[..., :length].float()
+    perturbed = perturbed[..., :length].float()
+
+    if original.shape[0] != perturbed.shape[0]:
+        perturbed = perturbed.mean(0, keepdim=True).expand_as(original)
+    return original, perturbed
+
+
+def measure(
+    original: torch.Tensor,
+    perturbed: torch.Tensor,
+    sr: int,
+    window_seconds: int | None = None,
+) -> SnrResult:
+    """Whole-window and segmental SNR of two aligned signals.
+
+    Args:
+        original:       Clean signal, ``[channels, samples]`` at ``sr``.
+        perturbed:      Perturbed signal, same shape as ``original``.
+        sr:             Sample rate in Hz.
+        window_seconds: Seconds measured from the start; defaults to
+            ``SNR_WINDOW_SECONDS`` (the longest model window).
+
+    Returns:
+        An ``SnrResult``. Identical signals give ``inf`` everywhere. A silent
+        original gives ``original_silent=True`` and ``-inf`` (any
+        perturbation over silence is audible) or ``inf`` (none).
+    """
+    if window_seconds is None:
+        window_seconds = SNR_WINDOW_SECONDS
+    original = trim(original.float(), sr, window_seconds)
+    perturbed = trim(perturbed.float(), sr, window_seconds)
+
+    whole = snr_db(original, perturbed)
+    if _rms(original) < SILENCE_RMS:
+        return SnrResult(whole, whole, whole, original_silent=True)
+
+    frames = _segmental_db(original, original - perturbed, int(sr * SNR_SEGMENT_SECONDS))
+    if not frames:
+        return SnrResult(math.inf, math.inf, math.inf, original_silent=False)
+
+    return SnrResult(
+        snr_db=whole,
+        segmental_min_db=min(frames),
+        segmental_mean_db=sum(frames) / len(frames),
+        original_silent=False,
+    )
+
+
 def compute(original_path: str, perturbed_path: str) -> SnrResult:
     """Compute whole-window and segmental SNR between two audio files.
 
-    The perturbed file is resampled to match the original if their sample
-    rates differ. If the channel counts differ, the perturbed file is
-    mixed down and broadcast to match the original. Both are trimmed to
-    the model window.
+    Loads both files, ``align``\\ s the perturbed one to the original and
+    ``measure``\\ s the first ``SNR_WINDOW_SECONDS``.
 
     Args:
         original_path:  Path to the original (clean) audio file.
         perturbed_path: Path to the perturbed audio file.
 
     Returns:
-        An ``SnrResult``. Identical files give ``inf`` everywhere. A silent
-        original gives ``original_silent=True`` and ``-inf`` (any
-        perturbation over silence is audible) or ``inf`` (none).
+        An ``SnrResult``; see ``measure``.
     """
     orig, sr = load(original_path)
     pert, sr_pert = load(perturbed_path)
-
-    # Align sample rate
-    pert = resample(pert, sr_pert, sr)
-
-    # Align length
-    min_len = min(orig.shape[-1], pert.shape[-1])
-    orig = orig[..., :min_len]
-    pert = pert[..., :min_len]
-
-    # Align channel count (mono-down + broadcast)
-    if orig.shape[0] != pert.shape[0]:
-        pert = pert.mean(0, keepdim=True).expand_as(orig)
-
-    # Measure only what the models see
-    orig = trim(orig.float(), sr, SNR_WINDOW_SECONDS)
-    noise = orig - trim(pert.float(), sr, SNR_WINDOW_SECONDS)
-
-    rms_orig, rms_noise = _rms(orig), _rms(noise)
-    if rms_orig < SILENCE_RMS:
-        value = math.inf if rms_noise < _NOISE_FREE_RMS else -math.inf
-        return SnrResult(value, value, value, original_silent=True)
-
-    frames = _segmental_db(orig, noise, int(sr * SNR_SEGMENT_SECONDS))
-    if not frames:
-        return SnrResult(math.inf, math.inf, math.inf, original_silent=False)
-
-    return SnrResult(
-        snr_db=_db(rms_orig, rms_noise),
-        segmental_min_db=min(frames),
-        segmental_mean_db=sum(frames) / len(frames),
-        original_silent=False,
-    )
+    orig, pert = align(orig, sr, pert, sr_pert)
+    return measure(orig, pert, sr)
 
 
 def _rms(x: torch.Tensor) -> float:
@@ -101,7 +177,7 @@ def _db(rms_signal: float, rms_noise: float) -> float:
     return 20.0 * math.log10(rms_signal / rms_noise)
 
 
-def _segmental_db(orig: torch.Tensor, noise: torch.Tensor, frame_len: int) -> List[float]:
+def _segmental_db(orig: torch.Tensor, noise: torch.Tensor, frame_len: int) -> list[float]:
     """Per-frame SNR in dB for every frame that carries noise.
 
     Noise-free frames are skipped (their SNR is infinite and would swamp

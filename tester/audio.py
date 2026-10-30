@@ -6,14 +6,12 @@ system (which changes between PyTorch versions and currently requires
 `torchcodec`). All functions are pure and stateless.
 """
 
-from typing import Tuple
-
+import soundfile as sf
 import torch
 import torchaudio
-import soundfile as sf
 
 
-def load(path: str) -> Tuple[torch.Tensor, int]:
+def load(path: str) -> tuple[torch.Tensor, int]:
     """Load an audio file into a PyTorch tensor.
 
     Args:

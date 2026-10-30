@@ -53,3 +53,29 @@ def test_transcription_is_deterministic(monkeypatch):
     lyrics.transcribe("song.wav")
 
     assert calls[0].get("temperature") == 0.0
+
+
+@pytest.mark.parametrize(
+    ("original", "perturbed", "expected"),
+    [
+        ("one two three four", "one two", 0.5),        # perturbed transcript cut short
+        ("one two", "one two three four", 0.5),        # extra words heard
+        ("one two three four", "four", 0.75),
+    ],
+)
+def test_partial_transcripts(original, perturbed, expected):
+    assert confusion(original, perturbed) == pytest.approx(expected)
+
+
+def test_transcript_joins_segments(monkeypatch):
+    class Segment:
+        def __init__(self, text):
+            self.text = text
+
+    class FakeWhisper:
+        def transcribe(self, audio_path, **kwargs):
+            return iter([Segment(" hello "), Segment("world ")]), None
+
+    monkeypatch.setattr(lyrics.models, "whisper", FakeWhisper)
+
+    assert lyrics.transcribe("song.wav") == "hello world"

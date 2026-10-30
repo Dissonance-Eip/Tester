@@ -1,0 +1,40 @@
+[project]
+name = "music-perturbation-tester"
+version = "0.1.0"
+description = "Checks whether an audio perturbation confuses AI models while staying inaudible."
+requires-python = ">=3.11"
+
+[tool.ruff]
+target-version = "py311"
+line-length = 100
+extend-exclude = ["venv"]
+
+[tool.ruff.lint]
+select = [
+    "E",    # pycodestyle errors
+    "W",    # pycodestyle warnings
+    "F",    # pyflakes
+    "I",    # import order
+    "UP",   # modern syntax (PEP 585/604 hints)
+    "B",    # bugbear
+    "BLE",  # broad except
+    "PLW",  # pylint warnings (global statement, ...)
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+filterwarnings = [
+    # Third-party deprecations raised while importing MAEST; not ours to fix.
+    "ignore:pkg_resources is deprecated:UserWarning",
+    "ignore:`torch.jit.(script|interface)` is deprecated:FutureWarning",
+]
+
+[tool.coverage.run]
+source = ["tester"]
+
+[tool.mypy]
+python_version = "3.11"
+files = ["tester", "run.py", "test.py"]
+ignore_missing_imports = true   # maest, faster_whisper, soundfile, ... ship no stubs
+warn_unused_ignores = true
+warn_redundant_casts = true

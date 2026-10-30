@@ -17,11 +17,12 @@ Why some are CPU-only:
   on CPU and doesn't track device, so we keep the whole model on CPU.
 """
 
-from typing import Optional, Tuple
+from functools import cache
+from typing import Any
 
 from faster_whisper import WhisperModel
-from transformers import AutoModel, Wav2Vec2FeatureExtractor
 from maest import get_maest
+from transformers import AutoModel, Wav2Vec2FeatureExtractor
 
 from .config import (
     DEVICE,
@@ -32,47 +33,36 @@ from .config import (
     WHISPER_SIZE,
 )
 
-
-# Module-level caches (None until first load)
-_whisper:        Optional[WhisperModel] = None
-_mert_model:     Optional[object]       = None
-_mert_extractor: Optional[object]       = None
-_maest_model:    Optional[object]       = None
+# Each loader runs once; ``functools.cache`` keeps the model for later calls.
 
 
+@cache
 def whisper() -> WhisperModel:
     """Return the Whisper transcription model, loading it on first call."""
-    global _whisper
-    if _whisper is None:
-        print(f"  Loading Whisper {WHISPER_SIZE} (cpu)...")
-        _whisper = WhisperModel(
-            WHISPER_SIZE, device="cpu", compute_type="int8", revision=WHISPER_REVISION
-        )
-    return _whisper
+    print(f"  Loading Whisper {WHISPER_SIZE} (cpu)...")
+    return WhisperModel(
+        WHISPER_SIZE, device="cpu", compute_type="int8", revision=WHISPER_REVISION
+    )
 
 
-def mert() -> Tuple[object, object]:
+@cache
+def mert() -> tuple[Any, Any]:
     """Return ``(model, feature_extractor)`` for the MERT music encoder."""
-    global _mert_model, _mert_extractor
-    if _mert_model is None:
-        print(f"  Loading MERT music encoder ({DEVICE})...")
-        _mert_model = AutoModel.from_pretrained(
-            ENCODER_MODEL, revision=MERT_REVISION, trust_remote_code=True
-        )
-        _mert_extractor = Wav2Vec2FeatureExtractor.from_pretrained(
-            ENCODER_MODEL, revision=MERT_REVISION, trust_remote_code=True
-        )
-        _mert_model = _mert_model.to(DEVICE).eval()
-    return _mert_model, _mert_extractor
+    print(f"  Loading MERT music encoder ({DEVICE})...")
+    model = AutoModel.from_pretrained(
+        ENCODER_MODEL, revision=MERT_REVISION, trust_remote_code=True
+    )
+    extractor = Wav2Vec2FeatureExtractor.from_pretrained(
+        ENCODER_MODEL, revision=MERT_REVISION, trust_remote_code=True
+    )
+    return model.to(DEVICE).eval(), extractor
 
 
-def maest():
+@cache
+def maest() -> Any:
     """Return the MAEST genre classifier."""
-    global _maest_model
-    if _maest_model is None:
-        print("  Loading MAEST genre classifier (cpu)...")
-        _maest_model = get_maest(arch=MAEST_ARCH).eval()
-    return _maest_model
+    print("  Loading MAEST genre classifier (cpu)...")
+    return get_maest(arch=MAEST_ARCH).eval()
 
 
 def load_all() -> None:

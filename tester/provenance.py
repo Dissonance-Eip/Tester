@@ -8,7 +8,6 @@ with, so two results can be compared knowing whether the stack matched.
 import json
 import platform
 from importlib import metadata
-from typing import Dict, Optional
 
 from .config import MERT_REVISION, WHISPER_REVISION
 
@@ -29,7 +28,7 @@ TRACKED_PACKAGES = (
 NOT_INSTALLED = "not installed"
 
 
-def package_versions() -> Dict[str, str]:
+def package_versions() -> dict[str, str]:
     """Installed version of each tracked package, plus the Python version."""
     versions = {"python": platform.python_version()}
     for name in TRACKED_PACKAGES:
@@ -40,7 +39,7 @@ def package_versions() -> Dict[str, str]:
     return versions
 
 
-def model_revisions() -> Dict[str, Optional[str]]:
+def model_revisions() -> dict[str, str | None]:
     """Pinned Hub revisions, plus the installed MAEST commit."""
     return {
         "lyrics_transcriber": WHISPER_REVISION,
@@ -49,7 +48,7 @@ def model_revisions() -> Dict[str, Optional[str]]:
     }
 
 
-def maest_commit() -> Optional[str]:
+def maest_commit() -> str | None:
     """Git commit MAEST was installed from, read from its PEP 610 record.
 
     Read from the install rather than repeated in ``config`` so it can't
