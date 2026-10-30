@@ -24,6 +24,13 @@ MAEST_SR: int = 16_000
 MAX_AUDIO_SECONDS:    int = 30   # MERT + MAEST window
 WHISPER_MAX_SECONDS:  int = 60   # Whisper transcription window
 
+# ── SNR measurement ──────────────────────────────────────────
+# Measure the audio every model sees (the longest model window), not the
+# whole file, so a perturbation confined to that window is not diluted.
+SNR_WINDOW_SECONDS:  int   = max(MAX_AUDIO_SECONDS, WHISPER_MAX_SECONDS)
+SNR_SEGMENT_SECONDS: float = 0.5    # frame length for segmental SNR
+SILENCE_RMS:         float = 1e-4   # ≈ -80 dBFS; quieter originals count as silent
+
 # ── Pass / fail thresholds ───────────────────────────────────
 # SNR is in decibels; higher = more inaudible to humans.
 SNR_GOOD: float = 30.0   # imperceptible to a human listener

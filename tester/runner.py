@@ -6,6 +6,7 @@ every model, runs every metric, and returns the assembled results.
 Side effects (console output, JSON file) are delegated to ``report``.
 """
 
+import math
 from typing import Any, Dict
 
 from . import models
@@ -14,6 +15,7 @@ from .config import (
     LYRICS_CONFUSION_GOOD,
     SNR_GOOD,
     SNR_WARN,
+    SNR_WINDOW_SECONDS,
 )
 from .metrics import genre, lyrics, snr
 from .report import print_summary, save_json
@@ -45,9 +47,14 @@ def run(original_path: str, perturbed_path: str) -> Dict[str, Any]:
 
     # ── 1. SNR (human audibility) ────────────────────────────
     print("── Step 1/3: Human perceptual quality (SNR) ────")
-    snr_db = snr.compute(original_path, perturbed_path)
-    snr_label = _snr_label(snr_db)
-    print(f"  SNR: {snr_db:.1f} dB  ({snr_label})\n")
+    snr_result = snr.compute(original_path, perturbed_path)
+    snr_label = _snr_label(snr_result.segmental_min_db)
+    print(f"  SNR: {snr_result.snr_db:.1f} dB over the first {SNR_WINDOW_SECONDS} s")
+    print(f"  Segmental SNR: min {snr_result.segmental_min_db:.1f} dB, "
+          f"mean {snr_result.segmental_mean_db:.1f} dB  ({snr_label})")
+    if snr_result.original_silent:
+        print("  Original is silent in the window: SNR is undefined, counted as a fail.")
+    print()
 
     # ── 2. Lyrics confusion (Whisper) ────────────────────────
     print("── Step 2/3: AI lyrics confusion (Whisper) ─────")
@@ -78,7 +85,10 @@ def run(original_path: str, perturbed_path: str) -> Dict[str, Any]:
     results = _assemble_results(
         original_path  = original_path,
         perturbed_path = perturbed_path,
-        snr_db         = snr_db,
+        snr_db         = snr_result.snr_db,
+        snr_segmental_min_db  = snr_result.segmental_min_db,
+        snr_segmental_mean_db = snr_result.segmental_mean_db,
+        snr_original_silent   = snr_result.original_silent,
         snr_label      = snr_label,
         orig_lyrics    = orig_lyrics,
         pert_lyrics    = pert_lyrics,
@@ -103,6 +113,13 @@ def _snr_label(snr_db: float) -> str:
     return "noticeable"
 
 
+def _db(value: float):
+    """Round a dB value for JSON; infinities become ``"inf"`` / ``"-inf"``."""
+    if math.isinf(value):
+        return "inf" if value > 0 else "-inf"
+    return round(value, 2)
+
+
 def _format_genres(genres) -> str:
     """Pretty-print genre tuples for the console."""
     return "  ".join(f"{g} ({s:.0%})" for g, s in genres)
@@ -119,11 +136,20 @@ def _assemble_results(**kw) -> Dict[str, Any]:
 
     from .config import ENCODER_MODEL, MAEST_ARCH, DEVICE, WHISPER_SIZE
 
-    snr_ok      = kw["snr_db"]      >= SNR_GOOD
+    snr_gate    = kw["snr_segmental_min_db"]   # quietest frame decides audibility
+    snr_ok      = snr_gate          >= SNR_GOOD
     lyric_ok    = kw["lyric_conf"]  >= LYRICS_CONFUSION_GOOD
     genre_ok    = kw["genre_conf"]  >= GENRE_CONFUSION_GOOD
     label_changed = kw["orig_genres"][0][0] != kw["pert_genres"][0][0]
-    overall_pass  = snr_ok and lyric_ok and genre_ok
+
+    # Every success criterion listed in the README counts towards the verdict.
+    checks = {
+        "snr":           snr_ok,
+        "lyrics":        lyric_ok,
+        "encoder":       genre_ok,
+        "genre_label":   label_changed,
+    }
+    overall_pass = all(checks.values())
 
     return {
         "_about": (
@@ -148,18 +174,28 @@ def _assemble_results(**kw) -> Dict[str, Any]:
                 if overall_pass
                 else "See individual metrics below."
             ),
-            "metrics_passed": int(snr_ok) + int(lyric_ok) + int(genre_ok),
-            "metrics_total":  3,
+            "metrics_passed": sum(checks.values()),
+            "metrics_total":  len(checks),
+            "checks":         checks,
         },
         "human_perception": {
             "_description": "How audible the perturbation is to a human listener.",
-            "snr_db":       round(kw["snr_db"], 2) if kw["snr_db"] != float("inf") else "inf",
+            "window_seconds": SNR_WINDOW_SECONDS,
+            "snr_db":       _db(kw["snr_db"]),
+            "segmental_snr_db": {
+                "min":  _db(kw["snr_segmental_min_db"]),
+                "mean": _db(kw["snr_segmental_mean_db"]),
+            },
+            "gate":         "segmental_snr_db.min",
+            "original_silent": kw["snr_original_silent"],
             "label":        kw["snr_label"],
             "threshold":    {"good_above_db": SNR_GOOD, "warn_below_db": SNR_WARN},
             "pass":         snr_ok,
             "interpretation": (
-                "Imperceptible to a human listener."        if kw["snr_db"] >= SNR_GOOD else
-                "Borderline — some listeners may notice."   if kw["snr_db"] >= SNR_WARN else
+                "Original is silent; any perturbation over silence is audible."
+                if kw["snr_original_silent"] and not snr_ok else
+                "Imperceptible to a human listener."        if snr_gate >= SNR_GOOD else
+                "Borderline — some listeners may notice."   if snr_gate >= SNR_WARN else
                 "Clearly audible artifacts — humans hear the perturbation."
             ),
         },
@@ -188,6 +224,7 @@ def _assemble_results(**kw) -> Dict[str, Any]:
                 "original_top":   kw["orig_genres"][0][0],
                 "perturbed_top":  kw["pert_genres"][0][0],
                 "label_changed":  label_changed,
+                "pass":           label_changed,
             },
             "encoder_confusion": {
                 "_description": "Cosine distance between MERT embeddings.",
