@@ -23,7 +23,14 @@ from faster_whisper import WhisperModel
 from transformers import AutoModel, Wav2Vec2FeatureExtractor
 from maest import get_maest
 
-from .config import WHISPER_SIZE, ENCODER_MODEL, MAEST_ARCH, DEVICE
+from .config import (
+    DEVICE,
+    ENCODER_MODEL,
+    MAEST_ARCH,
+    MERT_REVISION,
+    WHISPER_REVISION,
+    WHISPER_SIZE,
+)
 
 
 # Module-level caches (None until first load)
@@ -38,7 +45,9 @@ def whisper() -> WhisperModel:
     global _whisper
     if _whisper is None:
         print(f"  Loading Whisper {WHISPER_SIZE} (cpu)...")
-        _whisper = WhisperModel(WHISPER_SIZE, device="cpu", compute_type="int8")
+        _whisper = WhisperModel(
+            WHISPER_SIZE, device="cpu", compute_type="int8", revision=WHISPER_REVISION
+        )
     return _whisper
 
 
@@ -47,9 +56,11 @@ def mert() -> Tuple[object, object]:
     global _mert_model, _mert_extractor
     if _mert_model is None:
         print(f"  Loading MERT music encoder ({DEVICE})...")
-        _mert_model = AutoModel.from_pretrained(ENCODER_MODEL, trust_remote_code=True)
+        _mert_model = AutoModel.from_pretrained(
+            ENCODER_MODEL, revision=MERT_REVISION, trust_remote_code=True
+        )
         _mert_extractor = Wav2Vec2FeatureExtractor.from_pretrained(
-            ENCODER_MODEL, trust_remote_code=True
+            ENCODER_MODEL, revision=MERT_REVISION, trust_remote_code=True
         )
         _mert_model = _mert_model.to(DEVICE).eval()
     return _mert_model, _mert_extractor

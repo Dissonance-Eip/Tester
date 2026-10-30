@@ -1,0 +1,37 @@
+# Music Perturbation Tester — direct dependencies (Python 3.11.9, macOS arm64)
+#
+# Edit THIS file, then regenerate the lock:
+#     MACOSX_DEPLOYMENT_TARGET=14.0 uv pip compile requirements.in \
+#         -o requirements.txt --python-version 3.11.9 \
+#         --python-platform aarch64-apple-darwin
+# (torch 2.15 ships macOS arm64 wheels for macOS 14+ only.)
+# Install from the lock only:  pip install -r requirements.txt
+#
+# Every direct dependency is pinned to the exact version the tester was
+# verified with, so scores stay comparable across machines and over time.
+
+# ── Deep learning ───────────────────────────────────────────
+torch==2.15.0
+torchaudio==2.11.1
+
+# ── Models ──────────────────────────────────────────────────
+faster-whisper==1.2.1         # Whisper transcription (CTranslate2-backed)
+ctranslate2==4.8.4            # Whisper inference backend; changes alter decoding
+transformers==4.57.6          # MERT loader; 5.x returns no hidden states for MERT
+huggingface_hub==0.36.2       # model downloads (revisions are pinned in tester/config.py)
+accelerate==1.15.0            # required by transformers for device placement
+nnAudio==0.3.4                # required by MERT's spectrogram frontend
+einops==0.8.2                 # used inside the MERT model code (trust_remote_code)
+maest @ git+https://github.com/palonso/MAEST.git@b667d608380b7e32dde28939fd2f09bbc8cf5e8c
+setuptools==80.10.2           # MAEST's deps import pkg_resources, removed in setuptools 81
+
+# ── Audio I/O ───────────────────────────────────────────────
+soundfile==0.14.0             # primary loader used in tester/audio.py
+librosa==0.11.0               # MAEST uses it internally
+av==14.1.0                    # PyAV — pinned so it doesn't try to build from source
+
+# ── Math / array libs ───────────────────────────────────────
+numpy==1.26.4
+
+# ── Tests ───────────────────────────────────────────────────
+pytest==9.2.0

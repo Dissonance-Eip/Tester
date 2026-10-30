@@ -5,6 +5,8 @@ All tunable parameters live here so the rest of the codebase has no magic
 numbers. Change a threshold or swap a model by editing one line.
 """
 
+from typing import Optional
+
 import torch
 
 # ── Compute device ───────────────────────────────────────────
@@ -15,6 +17,21 @@ DEVICE: str = "mps" if torch.backends.mps.is_available() else "cpu"
 WHISPER_SIZE:  str = "large-v3-turbo"           # faster-whisper model size
 ENCODER_MODEL: str = "m-a-p/MERT-v1-330M"       # MERT music understanding encoder
 MAEST_ARCH:    str = "discogs-maest-30s-pw-129e"  # MAEST Discogs genre classifier
+
+# ── Pinned Hugging Face revisions (commit SHAs) ──────────────
+# Loading by SHA means a Hub update can't silently change the weights, and
+# for MERT (trust_remote_code=True) it also pins the model code that runs
+# locally. Bump a SHA deliberately and note it: scores move with it.
+# MAEST weights are not on the Hub: they come from a GitHub release URL
+# fixed by the MAEST commit pinned in requirements.in.
+WHISPER_REVISION: str = "0a363e9161cbc7ed1431c9597a8ceaf0c4f78fcf"  # mobiuslabsgmbh/faster-whisper-large-v3-turbo
+MERT_REVISION:    str = "5240c2708a5acaee1007f43fb9735c7dcd0b78c9"  # m-a-p/MERT-v1-330M
+
+# ── Whisper decoding ─────────────────────────────────────────
+# Fixed settings so the same audio always gives the same text.
+WHISPER_LANGUAGE:    Optional[str] = "en"  # None = auto-detect per file
+WHISPER_TEMPERATURE: float = 0.0           # greedy, no sampling fallback
+WHISPER_CONDITION_ON_PREVIOUS_TEXT: bool = False  # no drift from earlier segments
 
 # ── Sample rates expected by each model (Hz) ─────────────────
 MERT_SR:  int = 24_000

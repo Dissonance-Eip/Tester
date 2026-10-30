@@ -70,3 +70,15 @@ def test_console_prints_verdict_and_metrics_passed(capsys):
     out = capsys.readouterr().out
     assert "FAIL" in out
     assert "3/4" in out
+
+
+def test_run_records_versions_and_model_revisions():
+    from tester.config import MERT_REVISION, WHISPER_REVISION
+
+    run = _results()["run"]
+
+    assert run["model_revisions"]["music_encoder"] == MERT_REVISION
+    assert run["model_revisions"]["lyrics_transcriber"] == WHISPER_REVISION
+    assert "genre_classifier" in run["model_revisions"]
+    for package in ("python", "torch", "transformers", "faster-whisper", "maest"):
+        assert run["versions"][package]

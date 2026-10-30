@@ -9,7 +9,7 @@ Side effects (console output, JSON file) are delegated to ``report``.
 import math
 from typing import Any, Dict
 
-from . import models
+from . import models, provenance
 from .config import (
     GENRE_CONFUSION_GOOD,
     LYRICS_CONFUSION_GOOD,
@@ -166,6 +166,8 @@ def _assemble_results(**kw) -> Dict[str, Any]:
                 "genre_classifier":   MAEST_ARCH,
                 "music_encoder":      ENCODER_MODEL,
             },
+            "model_revisions": provenance.model_revisions(),
+            "versions":        provenance.package_versions(),
         },
         "verdict": {
             "overall_pass":   overall_pass,
