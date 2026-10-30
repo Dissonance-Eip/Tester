@@ -42,10 +42,10 @@ warnings.filterwarnings("ignore", message=".*output with one or more elements wa
 _ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, _ROOT)
 
-from tester.audio import load_mono  # noqa: E402
-from tester.config import ATTACK_MASK_SCALE, MAX_AUDIO_SECONDS, SNR_GOOD  # noqa: E402
 from attack.optimizer import attack  # noqa: E402
 from attack.targets import MertTarget  # noqa: E402
+from tester.audio import load_mono  # noqa: E402
+from tester.config import ATTACK_MASK_SCALE, MAX_AUDIO_SECONDS, SNR_GOOD  # noqa: E402
 
 # Windows shorter than this are left unperturbed (too short for MERT's frontend).
 _MIN_WINDOW_SECONDS = 1
@@ -62,7 +62,8 @@ def main() -> int:
     ap.add_argument("song", help="Path to the input WAV")
     ap.add_argument("--iters", type=int, default=100, help="Gradient steps per window")
     ap.add_argument("--window", type=int, default=MAX_AUDIO_SECONDS,
-                    help=f"Attack window in seconds (default {MAX_AUDIO_SECONDS} = MERT's eval window)")
+                    help=f"Attack window in seconds "
+                         f"(default {MAX_AUDIO_SECONDS} = MERT's eval window)")
     ap.add_argument("--seconds", type=int, default=0, help="Cap total length (0 = whole file)")
     ap.add_argument("--snr", type=float, default=SNR_GOOD,
                     help="Loudness budget in dB (higher=quieter)")

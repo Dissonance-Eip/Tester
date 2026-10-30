@@ -6,14 +6,12 @@ system (which changes between PyTorch versions and currently requires
 `torchcodec`). All functions are pure and stateless.
 """
 
-from typing import Optional, Tuple
-
+import soundfile as sf
 import torch
 import torchaudio
-import soundfile as sf
 
 
-def load(path: str) -> Tuple[torch.Tensor, int]:
+def load(path: str) -> tuple[torch.Tensor, int]:
     """Load an audio file into a PyTorch tensor.
 
     Args:
@@ -75,12 +73,12 @@ def trim(waveform: torch.Tensor, sr: int, seconds: int) -> torch.Tensor:
 
 
 def load_mono(
-    path: str, sr: Optional[int] = None, seconds: Optional[int] = None
-) -> Tuple[torch.Tensor, int]:
+    path: str, sr: int | None = None, seconds: int | None = None
+) -> tuple[torch.Tensor, int]:
     """Load a file as mono, keep its first ``seconds`` and resample to ``sr``.
 
-    The one load chain shared by the metrics and ``attack/``: load, mix
-    down to mono, trim at the native rate, then resample.
+    The one load chain shared by the metrics and ``attack/``: load, then
+    ``prepare_mono``.
 
     Args:
         path:    Path to a WAV / FLAC / OGG file.
@@ -92,6 +90,29 @@ def load_mono(
         rate it is at (``sr`` if given, else the file's own rate).
     """
     waveform, native_sr = load(path)
+    return prepare_mono(waveform, native_sr, sr, seconds)
+
+
+def prepare_mono(
+    waveform: torch.Tensor,
+    native_sr: int,
+    sr: int | None = None,
+    seconds: int | None = None,
+) -> tuple[torch.Tensor, int]:
+    """``load_mono`` for audio already in memory: mono, trim, then resample.
+
+    Mixes down to mono, trims at the native rate, then resamples, so a file
+    loaded once can feed every model.
+
+    Args:
+        waveform:  ``[channels, samples]`` or ``[samples]`` tensor.
+        native_sr: Sample rate of ``waveform`` in Hz.
+        sr:        Target sample rate in Hz; ``None`` keeps ``native_sr``.
+        seconds:   Keep only the first ``seconds``; ``None`` keeps everything.
+
+    Returns:
+        A tuple ``(mono, sample_rate)`` as in ``load_mono``.
+    """
     mono = to_mono(waveform)
     if seconds is not None:
         mono = trim(mono, native_sr, seconds)

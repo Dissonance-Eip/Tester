@@ -171,7 +171,7 @@ def attack_universal(segments, native_sr, target, *, iters: int = 200, lr: float
         total_conf = 0.0
         # Gradient accumulation: one song at a time keeps peak memory to a
         # single backward while still summing every song's gradient onto δ.
-        for seg, clean in zip(segs, cleans):
+        for seg, clean in zip(segs, cleans, strict=True):
             emb = target.embed(seg + delta, native_sr)
             distance = cosine_distance(emb, clean)
             (-distance).backward()

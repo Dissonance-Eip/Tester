@@ -85,6 +85,17 @@ Outputs:
 - A terminal summary box with the metric values
 - `results.json` with the full structured report
 
+Options:
+
+| Flag | Default | Effect |
+|---|---|---|
+| `--output PATH` | `results.json` | where the JSON report is written |
+| `--seconds N` | model windows | caps the audio analysed (lowers the 30 s MERT/MAEST and 60 s Whisper windows, never raises them) |
+| `--device {cpu,mps,cuda}` | `mps` if available, else `cpu` | device for MERT; Whisper and MAEST always run on CPU |
+
+Missing input files, a non-positive `--seconds`, a missing output directory
+or an unavailable device are reported before any model loads.
+
 Sanity-check the pipeline by passing the same file twice — SNR should be
 `inf dB`, confusions near 0%, genre label unchanged (so the verdict is FAIL):
 
@@ -92,11 +103,28 @@ Sanity-check the pipeline by passing the same file twice — SNR should be
 python3 run.py sounds/sound.wav sounds/sound.wav
 ```
 
-Run the unit tests (small synthetic signals, no model downloads needed
-beyond the installed packages):
+Run the unit tests (small synthetic signals and fake models, no model
+downloads needed beyond the installed packages), the linter and the type
+checker, as CI does on every pull request:
 
 ```bash
-python3 -m pytest tests
+python3 -m pytest --cov=tester/metrics --cov-fail-under=80
+ruff check .
+mypy
+```
+
+The metrics also work on tensors directly, without files or models:
+
+```python
+from tester.metrics import snr, lyrics, genre
+snr.snr_db(original, perturbed)          # equal-shape tensors -> dB
+snr.measure(original, perturbed, sr)     # windowed + segmental SnrResult
+snr.align(original, sr, perturbed, sr2)  # match rate, length, channels
+snr.compute_waveforms(original, sr, perturbed, sr2)  # align + measure
+genre.classify_waveform(waveform, sr)    # MAEST top genres
+genre.fingerprint_waveform(waveform, sr) # MERT embedding
+lyrics.confusion("text a", "text b")     # word edit distance in [0, 1]
+genre.confusion(embedding_a, embedding_b)  # cosine distance in [0, 2]
 ```
 
 ---
@@ -142,13 +170,17 @@ music-perturbation-tester/
 ├── scripts/env.sh         # Python version + model list shared by both scripts
 ├── requirements.in        # direct dependencies, exact pins (edit this)
 ├── requirements.txt       # full lock compiled from requirements.in
+├── pyproject.toml         # ruff, mypy, pytest and coverage settings
+├── .github/workflows/     # CI: ruff, mypy, pytest
+├── tests/                 # unit tests on synthetic signals
 ├── README.md              # this file
 └── tester/                # package
     ├── __init__.py
     ├── config.py          # constants & thresholds
     ├── audio.py           # load / mono / resample / trim
     ├── models.py          # lazy model singletons
-    ├── runner.py          # orchestrates the pipeline
+    ├── runner.py          # orchestrates the pipeline, one helper per step
+    ├── result.py          # RunResult: results.json schema and verdict
     ├── report.py          # console + JSON output
     └── metrics/
         ├── snr.py         # human-perception metric

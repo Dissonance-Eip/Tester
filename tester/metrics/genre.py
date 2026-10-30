@@ -17,23 +17,29 @@ A successful poisoning attack should change BOTH:
 the MAEST label *and* the MERT embedding.
 """
 
-from typing import List, Tuple
-
 import torch
 
 from .. import models
-from ..audio import load_mono
+from ..audio import load, prepare_mono
 from ..config import MAEST_SR, MAX_AUDIO_SECONDS
 from ..embedding import cosine_distance, mert_embed
 
+Genres = list[tuple[str, float]]
+
 
 # ── MAEST: discrete genre labels ─────────────────────────────
-def classify(audio_path: str, top_k: int = 5) -> List[Tuple[str, float]]:
-    """Classify an audio file into Discogs genres.
+def classify(audio_path: str, top_k: int = 5) -> Genres:
+    """Classify an audio file into Discogs genres; see ``classify_waveform``."""
+    return classify_waveform(*load(audio_path), top_k=top_k)
+
+
+def classify_waveform(waveform: torch.Tensor, sr: int, top_k: int = 5) -> Genres:
+    """Classify audio already in memory into Discogs genres.
 
     Args:
-        audio_path: Path to the audio file.
-        top_k:      Number of top labels to return.
+        waveform: ``[channels, samples]`` or ``[samples]`` tensor at ``sr``.
+        sr:       Sample rate of ``waveform`` in Hz.
+        top_k:    Number of top labels to return.
 
     Returns:
         List of ``(label, probability)`` tuples sorted by probability
@@ -43,19 +49,24 @@ def classify(audio_path: str, top_k: int = 5) -> List[Tuple[str, float]]:
     """
     maest_model = models.maest()
 
-    waveform, _ = load_mono(audio_path, MAEST_SR, MAX_AUDIO_SECONDS)
-
-    audio = waveform.unsqueeze(0)  # [1, T] — kept on CPU; see models.maest()
+    mono, _ = prepare_mono(waveform, sr, MAEST_SR, MAX_AUDIO_SECONDS)
+    audio = mono.unsqueeze(0)  # [1, T] — kept on CPU; see models.maest()
 
     with torch.no_grad():
         activations, labels = maest_model.predict_labels(audio)
 
-    ranked = sorted(zip(labels, activations.tolist()), key=lambda x: x[1], reverse=True)
+    scored = zip(labels, activations.tolist(), strict=True)
+    ranked = sorted(scored, key=lambda x: x[1], reverse=True)
     return ranked[:top_k]
 
 
 # ── MERT: continuous music embeddings ────────────────────────
 def fingerprint(audio_path: str) -> torch.Tensor:
+    """MERT fingerprint of an audio file; see ``fingerprint_waveform``."""
+    return fingerprint_waveform(*load(audio_path))
+
+
+def fingerprint_waveform(waveform: torch.Tensor, sr: int) -> torch.Tensor:
     """Compute a deterministic music fingerprint with MERT.
 
     Averages every transformer hidden layer (not just the last) for a
@@ -64,16 +75,17 @@ def fingerprint(audio_path: str) -> torch.Tensor:
     ``attack/`` optimises against.
 
     Args:
-        audio_path: Path to the audio file.
+        waveform: ``[channels, samples]`` or ``[samples]`` tensor at ``sr``.
+        sr:       Sample rate of ``waveform`` in Hz.
 
     Returns:
         1-D float tensor on CPU representing the music's latent features.
         Same input always produces the same fingerprint.
     """
-    waveform, sr = load_mono(audio_path, seconds=MAX_AUDIO_SECONDS)
+    mono, mono_sr = prepare_mono(waveform, sr, seconds=MAX_AUDIO_SECONDS)
 
     with torch.no_grad():
-        embedding = mert_embed(waveform, sr)
+        embedding = mert_embed(mono, mono_sr)
 
     return embedding.cpu()
 

@@ -6,18 +6,18 @@ Run after ``setup.sh`` to verify the environment is healthy:
     python3 test.py
 """
 
-import sys
 import subprocess
-from typing import Callable, List, Tuple
+import sys
+from collections.abc import Callable
 
 
-def _check(label: str, fn: Callable[[], None]) -> bool:
+def _check(label: str, fn: Callable[[], object]) -> bool:
     """Run ``fn``; print the label if it succeeds, or the error if it doesn't."""
     try:
         fn()
         print(f"  {label}")
         return True
-    except Exception as exc:
+    except (ImportError, OSError, RuntimeError) as exc:  # missing module, dylib or binary
         print(f"  {label} — {exc}")
         return False
 
@@ -28,7 +28,7 @@ def _check_torch() -> None:
 
 
 def _check_ffmpeg() -> None:
-    r = subprocess.run(["ffmpeg", "-version"], capture_output=True)
+    r = subprocess.run(["ffmpeg", "-version"], capture_output=True, check=False)
     if r.returncode != 0:
         raise RuntimeError("ffmpeg not found")
 
@@ -36,7 +36,7 @@ def _check_ffmpeg() -> None:
 def main() -> int:
     print("\n── Checking dependencies ──────────────────────")
 
-    checks: List[Tuple[str, Callable[[], None]]] = [
+    checks: list[tuple[str, Callable[[], object]]] = [
         ("PyTorch",         _check_torch),
         ("torchaudio",      lambda: __import__("torchaudio")),
         ("soundfile",       lambda: __import__("soundfile")),

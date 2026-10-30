@@ -15,7 +15,6 @@ comparison is meaningful even if absolute transcription quality is lower.
 """
 
 import re
-from typing import List
 
 from .. import models
 from ..config import (
@@ -52,7 +51,7 @@ def transcribe(audio_path: str) -> str:
     return " ".join(seg.text.strip() for seg in segments)
 
 
-def normalise(text: str) -> List[str]:
+def normalise(text: str) -> list[str]:
     """Lower-case, strip punctuation and split into word tokens.
 
     Apostrophes are dropped so ``Don't`` and ``dont`` match; every other
@@ -83,7 +82,7 @@ def confusion(original_text: str, perturbed_text: str) -> float:
     return _edit_distance(words_o, words_p) / longest
 
 
-def _edit_distance(a: List[str], b: List[str]) -> int:
+def _edit_distance(a: list[str], b: list[str]) -> int:
     """Levenshtein distance between two token lists (insert/delete/substitute)."""
     previous = list(range(len(b) + 1))
     for i, token_a in enumerate(a, start=1):

@@ -8,3 +8,8 @@ sounds/*.wav
 sounds/*.mp3
 .DS_Store
 .setup-state
+.coverage
+htmlcov/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/

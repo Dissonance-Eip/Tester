@@ -31,10 +31,10 @@ _ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, _ROOT)
 warnings.filterwarnings("ignore", message=".*output with one or more elements was resized.*")
 
-from tester.audio import load_mono  # noqa: E402
-from tester.config import MAX_AUDIO_SECONDS, SNR_GOOD  # noqa: E402
 from attack.optimizer import attack_universal  # noqa: E402
 from attack.targets import MertTarget  # noqa: E402
+from tester.audio import load_mono  # noqa: E402
+from tester.config import MAX_AUDIO_SECONDS, SNR_GOOD  # noqa: E402
 
 
 def load_songs(train, test, seconds):
@@ -78,7 +78,7 @@ def main() -> int:
         segs, test_seg, sr = load_songs(args.train, args.test, args.seconds)
     except ValueError as exc:
         ap.error(str(exc))
-    for p, seg in zip(args.train, segs):
+    for p, seg in zip(args.train, segs, strict=True):
         print(f"  {os.path.basename(p)}  {seg.shape[-1] / sr:.1f}s")
 
     print("\nLoading MERT ...")
@@ -105,7 +105,7 @@ def main() -> int:
     sf.write(poison_path, poisoned.numpy(), sr, subtype="FLOAT")
 
     print("\nWrote → sounds/")
-    print(f"  uap_delta.wav            (the universal perturbation)")
+    print("  uap_delta.wav            (the universal perturbation)")
     print(f"  {name}_uap_clean.wav")
     print(f"  {name}_uap_poisoned.wav")
     print("\nHELD-OUT generalisation test (the number that matters):")

@@ -33,5 +33,8 @@ av==14.1.0                    # PyAV — pinned so it doesn't try to build from 
 # ── Math / array libs ───────────────────────────────────────
 numpy==1.26.4
 
-# ── Tests ───────────────────────────────────────────────────
+# ── Tests and lint ──────────────────────────────────────────
 pytest==9.2.0
+pytest-cov==7.1.0             # coverage gate on tester/metrics in CI
+ruff==0.17.3                  # lint; config in pyproject.toml
+mypy==2.4.1                   # type check; config in pyproject.toml
