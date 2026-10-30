@@ -72,7 +72,8 @@ def compute(original_path: str, perturbed_path: str) -> SnrResult:
 
     # Measure only what the models see
     orig = trim(orig.float(), sr, SNR_WINDOW_SECONDS)
-    noise = orig - trim(pert.float(), sr, SNR_WINDOW_SECONDS)
+    pert = trim(pert.float(), sr, SNR_WINDOW_SECONDS)
+    noise = orig - pert
 
     rms_orig, rms_noise = _rms(orig), _rms(noise)
     if rms_orig < SILENCE_RMS:
@@ -84,15 +85,31 @@ def compute(original_path: str, perturbed_path: str) -> SnrResult:
         return SnrResult(math.inf, math.inf, math.inf, original_silent=False)
 
     return SnrResult(
-        snr_db=_db(rms_orig, rms_noise),
+        snr_db=snr_db(orig, pert),
         segmental_min_db=min(frames),
         segmental_mean_db=sum(frames) / len(frames),
         original_silent=False,
     )
 
 
+def rms(x: torch.Tensor) -> torch.Tensor:
+    """Root-mean-square of ``x`` as a 0-dim tensor in ``x``'s dtype.
+
+    Kept as a tensor so ``attack/`` can stay on its device and in float32.
+    """
+    return x.pow(2).mean().sqrt()
+
+
+def snr_db(original: torch.Tensor, perturbed: torch.Tensor) -> float:
+    """SNR in dB of ``perturbed`` against ``original`` (same shape).
+
+    ``inf`` when the two are identical. No silence handling: see ``compute``.
+    """
+    return _db(_rms(original), _rms(original - perturbed))
+
+
 def _rms(x: torch.Tensor) -> float:
-    return x.pow(2).mean().sqrt().item() if x.numel() else 0.0
+    return rms(x).item() if x.numel() else 0.0
 
 
 def _db(rms_signal: float, rms_noise: float) -> float:
