@@ -9,11 +9,15 @@ file) are delegated to ``report``.
 
 from typing import Any, NamedTuple
 
+import torch
+
 from . import models
+from .audio import load
 from .config import SNR_WINDOW_SECONDS
 from .metrics import genre, lyrics, snr
+from .metrics.genre import Genres
 from .report import print_summary, save_json
-from .result import Genres, RunResult, snr_label
+from .result import RunResult, snr_label
 
 DEFAULT_OUTPUT = "results.json"
 _PREVIEW_CHARS = 120
@@ -23,6 +27,14 @@ class _LyricsStep(NamedTuple):
     original: str
     perturbed: str
     confusion: float
+
+
+class _Audio(NamedTuple):
+    """A file decoded once and shared by the SNR, MAEST and MERT steps."""
+
+    path: str
+    waveform: torch.Tensor  # [channels, samples]
+    sr: int
 
 
 class _GenreStep(NamedTuple):
@@ -43,7 +55,9 @@ def run(
     3. **Genre + encoder**  — does MAEST relabel? does MERT see a different track?
 
     All metrics use identical settings on both files so the comparison
-    is fair.
+    is fair. Each file is decoded once and the tensors feed SNR, MAEST
+    and MERT; Whisper decodes the file itself (faster-whisper's own
+    decoder and resampler, which its transcripts depend on).
 
     Args:
         original_path:  Path to the clean reference audio.
@@ -58,9 +72,12 @@ def run(
     models.load_all()
     print(f"Evaluating poison: {original_path}  →  {perturbed_path}\n")
 
-    snr_result = _snr_step(original_path, perturbed_path)
+    original = _Audio(original_path, *load(original_path))
+    perturbed = _Audio(perturbed_path, *load(perturbed_path))
+
+    snr_result = _snr_step(original, perturbed)
     lyrics_result = _lyrics_step(original_path, perturbed_path)
-    genre_result = _genre_step(original_path, perturbed_path)
+    genre_result = _genre_step(original, perturbed)
 
     results = RunResult(
         original_path=original_path,
@@ -80,9 +97,11 @@ def run(
 
 
 # ── Steps ────────────────────────────────────────────────────
-def _snr_step(original_path: str, perturbed_path: str) -> snr.SnrResult:
+def _snr_step(original: _Audio, perturbed: _Audio) -> snr.SnrResult:
     print("── Step 1/3: Human perceptual quality (SNR) ────")
-    result = snr.compute(original_path, perturbed_path)
+    result = snr.compute_waveforms(
+        original.waveform, original.sr, perturbed.waveform, perturbed.sr
+    )
     print(f"  SNR: {result.snr_db:.1f} dB over the first {SNR_WINDOW_SECONDS} s")
     print(f"  Segmental SNR: min {result.segmental_min_db:.1f} dB, "
           f"mean {result.segmental_mean_db:.1f} dB  ({snr_label(result.segmental_min_db)})")
@@ -103,21 +122,22 @@ def _lyrics_step(original_path: str, perturbed_path: str) -> _LyricsStep:
     return _LyricsStep(original, perturbed, confusion)
 
 
-def _genre_step(original_path: str, perturbed_path: str) -> _GenreStep:
+def _genre_step(original: _Audio, perturbed: _Audio) -> _GenreStep:
     print("── Step 3/3: AI genre classification + encoder ─")
     print("  Classifying original (MAEST)...")
-    original = genre.classify(original_path)
+    original_genres = genre.classify_waveform(original.waveform, original.sr)
     print("  Classifying perturbed (MAEST)...")
-    perturbed = genre.classify(perturbed_path)
-    print("  Original  genres:", _format_genres(original))
-    print("  Perturbed genres:", _format_genres(perturbed))
+    perturbed_genres = genre.classify_waveform(perturbed.waveform, perturbed.sr)
+    print("  Original  genres:", _format_genres(original_genres))
+    print("  Perturbed genres:", _format_genres(perturbed_genres))
 
     print("\n  Computing encoder confusion (MERT)...")
     confusion = genre.confusion(
-        genre.fingerprint(original_path), genre.fingerprint(perturbed_path)
+        genre.fingerprint_waveform(original.waveform, original.sr),
+        genre.fingerprint_waveform(perturbed.waveform, perturbed.sr),
     )
     print(f"  Encoder confusion: {confusion:.2%}\n")
-    return _GenreStep(original, perturbed, confusion)
+    return _GenreStep(original_genres, perturbed_genres, confusion)
 
 
 def _format_genres(genres: Genres) -> str:

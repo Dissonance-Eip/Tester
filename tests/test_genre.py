@@ -43,26 +43,6 @@ class FakeMaest:
         return torch.tensor([0.1, 0.7, 0.4]), ["Jazz---Bop", "Rock---Punk", "Pop---Indie"]
 
 
-class FakeMertOutput:
-    def __init__(self, hidden_states):
-        self.hidden_states = hidden_states
-
-
-class FakeMert:
-    """Returns two hidden layers whose mean over layers and time is all ones."""
-
-    def __call__(self, input_values, output_hidden_states):
-        frames = 4
-        return FakeMertOutput((
-            torch.zeros(1, frames, EMBED_DIM),
-            torch.full((1, frames, EMBED_DIM), 2.0),
-        ))
-
-
-def fake_extractor(waveform, sampling_rate, return_tensors):
-    return {"input_values": torch.from_numpy(waveform).unsqueeze(0)}
-
-
 def test_classify_ranks_labels_by_probability(write_wav, monkeypatch):
     maest = FakeMaest()
     monkeypatch.setattr(genre.models, "maest", lambda: maest)
@@ -75,11 +55,31 @@ def test_classify_ranks_labels_by_probability(write_wav, monkeypatch):
     assert maest.inputs[0].shape == (1, genre.MAEST_SR * 1)
 
 
-def test_fingerprint_averages_layers_and_time(write_wav, monkeypatch):
-    monkeypatch.setattr(genre.models, "mert", lambda: (FakeMert(), fake_extractor))
-    monkeypatch.setattr(genre, "DEVICE", "cpu")
+def test_fingerprint_feeds_a_trimmed_mono_window_to_mert(monkeypatch):
+    seen = []
 
-    fp = genre.fingerprint(write_wav("song", sine(1.0, sr=SAMPLE_RATE)))
+    def fake_embed(waveform, sr):
+        seen.append((waveform, sr))
+        return torch.ones(EMBED_DIM)
 
-    assert fp.shape == (EMBED_DIM,)
-    assert torch.allclose(fp, torch.ones(EMBED_DIM))
+    monkeypatch.setattr(genre, "mert_embed", fake_embed)
+    monkeypatch.setattr(genre, "MAX_AUDIO_SECONDS", 1)
+    stereo = torch.from_numpy(sine(2.0)).float().repeat(2, 1)  # [2, 2 s]
+
+    fp = genre.fingerprint_waveform(stereo, SAMPLE_RATE)
+
+    assert torch.equal(fp, torch.ones(EMBED_DIM))
+    waveform, sr = seen[0]
+    assert sr == SAMPLE_RATE
+    assert waveform.shape == (SAMPLE_RATE,)  # mono, first second only
+
+
+def test_path_and_tensor_entry_points_agree(write_wav, monkeypatch):
+    from tester.audio import load
+
+    monkeypatch.setattr(genre.models, "maest", FakeMaest)
+    monkeypatch.setattr(genre, "mert_embed", lambda waveform, sr: waveform[:EMBED_DIM])
+    path = write_wav("song", sine(1.0))
+
+    assert genre.classify(path) == genre.classify_waveform(*load(path))
+    assert torch.equal(genre.fingerprint(path), genre.fingerprint_waveform(*load(path)))

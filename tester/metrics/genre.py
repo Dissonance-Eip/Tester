@@ -20,17 +20,26 @@ the MAEST label *and* the MERT embedding.
 import torch
 
 from .. import models
-from ..audio import load, resample, to_mono, trim
-from ..config import DEVICE, MAEST_SR, MAX_AUDIO_SECONDS, MERT_SR
+from ..audio import load, prepare_mono
+from ..config import MAEST_SR, MAX_AUDIO_SECONDS
+from ..embedding import cosine_distance, mert_embed
+
+Genres = list[tuple[str, float]]
 
 
 # ── MAEST: discrete genre labels ─────────────────────────────
-def classify(audio_path: str, top_k: int = 5) -> list[tuple[str, float]]:
-    """Classify an audio file into Discogs genres.
+def classify(audio_path: str, top_k: int = 5) -> Genres:
+    """Classify an audio file into Discogs genres; see ``classify_waveform``."""
+    return classify_waveform(*load(audio_path), top_k=top_k)
+
+
+def classify_waveform(waveform: torch.Tensor, sr: int, top_k: int = 5) -> Genres:
+    """Classify audio already in memory into Discogs genres.
 
     Args:
-        audio_path: Path to the audio file.
-        top_k:      Number of top labels to return.
+        waveform: ``[channels, samples]`` or ``[samples]`` tensor at ``sr``.
+        sr:       Sample rate of ``waveform`` in Hz.
+        top_k:    Number of top labels to return.
 
     Returns:
         List of ``(label, probability)`` tuples sorted by probability
@@ -40,12 +49,8 @@ def classify(audio_path: str, top_k: int = 5) -> list[tuple[str, float]]:
     """
     maest_model = models.maest()
 
-    waveform, sr = load(audio_path)
-    waveform = to_mono(waveform)
-    waveform = trim(waveform, sr, MAX_AUDIO_SECONDS)
-    waveform = resample(waveform, sr, MAEST_SR)
-
-    audio = waveform.unsqueeze(0)  # [1, T] — kept on CPU; see models.maest()
+    mono, _ = prepare_mono(waveform, sr, MAEST_SR, MAX_AUDIO_SECONDS)
+    audio = mono.unsqueeze(0)  # [1, T] — kept on CPU; see models.maest()
 
     with torch.no_grad():
         activations, labels = maest_model.predict_labels(audio)
@@ -57,35 +62,30 @@ def classify(audio_path: str, top_k: int = 5) -> list[tuple[str, float]]:
 
 # ── MERT: continuous music embeddings ────────────────────────
 def fingerprint(audio_path: str) -> torch.Tensor:
+    """MERT fingerprint of an audio file; see ``fingerprint_waveform``."""
+    return fingerprint_waveform(*load(audio_path))
+
+
+def fingerprint_waveform(waveform: torch.Tensor, sr: int) -> torch.Tensor:
     """Compute a deterministic music fingerprint with MERT.
 
     Averages every transformer hidden layer (not just the last) for a
     richer representation, then mean-pools over time to produce a fixed
-    1-D vector.
+    1-D vector. The embedding is ``embedding.mert_embed``, the same one
+    ``attack/`` optimises against.
 
     Args:
-        audio_path: Path to the audio file.
+        waveform: ``[channels, samples]`` or ``[samples]`` tensor at ``sr``.
+        sr:       Sample rate of ``waveform`` in Hz.
 
     Returns:
         1-D float tensor on CPU representing the music's latent features.
         Same input always produces the same fingerprint.
     """
-    mert_model, mert_extractor = models.mert()
-
-    waveform, sr = load(audio_path)
-    waveform = to_mono(waveform)
-    waveform = trim(waveform, sr, MAX_AUDIO_SECONDS)
-    waveform = resample(waveform, sr, MERT_SR)
-
-    inputs = mert_extractor(
-        waveform.numpy(), sampling_rate=MERT_SR, return_tensors="pt"
-    )
-    inputs = {k: v.to(DEVICE) for k, v in inputs.items()}
+    mono, mono_sr = prepare_mono(waveform, sr, seconds=MAX_AUDIO_SECONDS)
 
     with torch.no_grad():
-        outputs   = mert_model(**inputs, output_hidden_states=True)
-        hidden    = torch.stack(outputs.hidden_states)     # [L, 1, T, D]
-        embedding = hidden.mean(dim=(0, 2)).squeeze(0)     # [D]
+        embedding = mert_embed(mono, mono_sr)
 
     return embedding.cpu()
 
@@ -102,6 +102,4 @@ def confusion(fp1: torch.Tensor, fp2: torch.Tensor) -> float:
         2 = exact opposites. For our purposes anything above ~0.3 means
         a music-understanding model would see the two files as different.
     """
-    return 1.0 - torch.nn.functional.cosine_similarity(
-        fp1.unsqueeze(0), fp2.unsqueeze(0)
-    ).item()
+    return cosine_distance(fp1, fp2).item()

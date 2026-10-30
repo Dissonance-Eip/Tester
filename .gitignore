@@ -7,6 +7,7 @@ results_good.json
 sounds/*.wav
 sounds/*.mp3
 .DS_Store
+.setup-state
 .coverage
 htmlcov/
 .pytest_cache/

@@ -25,9 +25,8 @@ from .config import (
     SNR_WINDOW_SECONDS,
     WHISPER_SIZE,
 )
+from .metrics.genre import Genres
 from .metrics.snr import SnrResult
-
-Genres = list[tuple[str, float]]
 
 ABOUT = (
     "Audio poisoning effectiveness report. A successful perturbation is "

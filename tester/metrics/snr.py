@@ -18,10 +18,12 @@ The pass/fail gate uses the quietest frame (``segmental_min_db``).
 
 Layers, each usable on its own:
 
+* ``rms(x)``                          — RMS as a tensor (also used by ``attack/``)
 * ``snr_db(original, perturbed)``     — one number from two equal-shape tensors
 * ``align(original, sr, perturbed, sr_perturbed)`` — match rate, length, channels
 * ``measure(original, perturbed, sr)`` — window + whole and segmental SNR
-* ``compute(original_path, perturbed_path)`` — load files, align, measure
+* ``compute_waveforms(original, sr, perturbed, sr_perturbed)`` — align, measure
+* ``compute(original_path, perturbed_path)`` — load files, then the above
 """
 
 import math
@@ -43,6 +45,14 @@ class SnrResult(NamedTuple):
     segmental_min_db: float   # quietest-to-noise frame; used by the gate
     segmental_mean_db: float  # mean over frames that carry noise
     original_silent: bool     # original is silent over the whole window
+
+
+def rms(x: torch.Tensor) -> torch.Tensor:
+    """Root-mean-square of ``x`` as a 0-dim tensor in ``x``'s dtype.
+
+    Kept as a tensor so ``attack/`` can stay on its device and in float32.
+    """
+    return x.pow(2).mean().sqrt()
 
 
 def snr_db(original: torch.Tensor, perturbed: torch.Tensor) -> float:
@@ -161,14 +171,26 @@ def compute(original_path: str, perturbed_path: str) -> SnrResult:
     Returns:
         An ``SnrResult``; see ``measure``.
     """
-    orig, sr = load(original_path)
-    pert, sr_pert = load(perturbed_path)
-    orig, pert = align(orig, sr, pert, sr_pert)
-    return measure(orig, pert, sr)
+    return compute_waveforms(*load(original_path), *load(perturbed_path))
+
+
+def compute_waveforms(
+    original: torch.Tensor, sr: int, perturbed: torch.Tensor, sr_perturbed: int
+) -> SnrResult:
+    """``compute`` for audio already in memory: ``align`` then ``measure``.
+
+    Args:
+        original:     ``[channels, samples]`` tensor at ``sr``.
+        sr:           Sample rate of ``original`` in Hz.
+        perturbed:    ``[channels, samples]`` tensor at ``sr_perturbed``.
+        sr_perturbed: Sample rate of ``perturbed`` in Hz.
+    """
+    original, perturbed = align(original, sr, perturbed, sr_perturbed)
+    return measure(original, perturbed, sr)
 
 
 def _rms(x: torch.Tensor) -> float:
-    return x.pow(2).mean().sqrt().item() if x.numel() else 0.0
+    return rms(x).item() if x.numel() else 0.0
 
 
 def _db(rms_signal: float, rms_noise: float) -> float:

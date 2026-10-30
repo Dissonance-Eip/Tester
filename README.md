@@ -55,9 +55,15 @@ The script handles, in order:
 3. `ffmpeg`, `pyenv`, and Python build deps
 4. Python 3.11.9 via pyenv
 5. A project-local virtualenv at `./venv/`
-6. PyTorch + faster-whisper + transformers + MAEST
-7. `PYTORCH_ENABLE_MPS_FALLBACK=1` in your shell rc
+6. The pinned lock `requirements.txt` (PyTorch, faster-whisper, transformers, MAEST)
+7. `PYTORCH_ENABLE_MPS_FALLBACK=1` in `venv/bin/activate`
 8. A dependency sanity check (`test.py`)
+
+It is safe to re-run: finished steps are skipped and an existing `venv/` on
+the right Python is reused. It never edits your shell rc files without asking
+(it only offers to add Homebrew to your login shell file when Homebrew is not
+on your `PATH`). `--yes` answers yes to every prompt. The Python version and
+the model list live in `scripts/env.sh`.
 
 When it finishes you'll see:
 ```
@@ -114,6 +120,9 @@ from tester.metrics import snr, lyrics, genre
 snr.snr_db(original, perturbed)          # equal-shape tensors -> dB
 snr.measure(original, perturbed, sr)     # windowed + segmental SnrResult
 snr.align(original, sr, perturbed, sr2)  # match rate, length, channels
+snr.compute_waveforms(original, sr, perturbed, sr2)  # align + measure
+genre.classify_waveform(waveform, sr)    # MAEST top genres
+genre.fingerprint_waveform(waveform, sr) # MERT embedding
 lyrics.confusion("text a", "text b")     # word edit distance in [0, 1]
 genre.confusion(embedding_a, embedding_b)  # cosine distance in [0, 2]
 ```
@@ -122,7 +131,9 @@ genre.confusion(embedding_a, embedding_b)  # cosine distance in [0, 2]
 
 ## First-run downloads
 
-These are cached in `~/.cache/huggingface/` after the first run:
+These are cached after the first run, in the Hugging Face cache
+(`HF_HUB_CACHE`, default `~/.cache/huggingface/hub`) and, for MAEST, the
+torch.hub cache (`TORCH_HOME`, default `~/.cache/torch`):
 
 | Model | Size |
 |-------|------|
@@ -156,6 +167,7 @@ music-perturbation-tester/
 ├── test.py                # dependency sanity check
 ├── setup.sh               # full environment installer
 ├── cleanup.sh             # remove venv + model caches
+├── scripts/env.sh         # Python version + model list shared by both scripts
 ├── requirements.in        # direct dependencies, exact pins (edit this)
 ├── requirements.txt       # full lock compiled from requirements.in
 ├── pyproject.toml         # ruff, mypy, pytest and coverage settings
@@ -184,13 +196,18 @@ metric by dropping a file in `tester/metrics/` and calling it from
 
 ## Cleanup
 
-To remove the venv, downloaded models, or the pyenv Python install:
+To remove the venv, this tester's downloaded models, or the pyenv Python
+install (only if `setup.sh` installed it):
 
 ```bash
-./cleanup.sh
+./cleanup.sh --dry-run   # list what would be removed
+./cleanup.sh             # asks before each removal (default No)
 ```
 
-Homebrew packages are left alone — they're used system-wide.
+It works from any directory, respects `HF_HUB_CACHE`/`HF_HOME`/`TORCH_HOME`,
+and only touches the paths it lists. The model caches are shared with other
+projects, so they re-download if you remove them. Homebrew packages are left
+alone — they're used system-wide.
 
 ---
 
