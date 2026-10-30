@@ -1,107 +1,183 @@
 #!/bin/bash
-
 # ============================================================
 # Music Perturbation Tester - Cleanup Script
-# Removes the venv, downloaded models, and optionally the
-# pyenv Python install created by setup.sh.
-# Does NOT touch Homebrew packages (used system-wide).
+# Removes what setup.sh and the tester created, and nothing else:
+#   - ./venv and the ./.python-version pin
+#   - this tester's models in the Hugging Face and torch.hub caches
+#     (honours HF_HUB_CACHE / HF_HOME / TORCH_HOME / XDG_CACHE_HOME)
+#   - the pyenv Python, only if setup.sh installed it
+# Every removal is confirmed (default No). Homebrew packages are left alone.
 # ============================================================
+set -euo pipefail
+cd "$(dirname "$0")"
 
-GREEN='\033[0;32m'
-RED='\033[0;31m'
-YELLOW='\033[1;33m'
-NC='\033[0m'
+# shellcheck source=scripts/env.sh
+source scripts/env.sh
+LOG_TAG="CLEAN"
+ASSUME_YES=false
+DRY_RUN=false
+REMOVED=()
 
-log()   { echo -e "${GREEN}[CLEAN]${NC} $1"; }
-warn()  { echo -e "${YELLOW}[WARN]${NC}  $1"; }
-confirm() {
-    read -r -p "$(echo -e "${YELLOW}[?]${NC}  $1 [y/N] ")" ans
-    [[ "$ans" =~ ^[Yy]$ ]]
+usage() {
+    echo "Usage: ./cleanup.sh [--dry-run] [--yes]"
+    echo "  --dry-run   list what would be removed, remove nothing"
+    echo "  --yes       remove without asking"
 }
 
-echo ""
-echo -e "${RED}============================================${NC}"
-echo -e "${RED}  Music Perturbation Tester — Cleanup      ${NC}"
-echo -e "${RED}============================================${NC}"
-echo ""
+parse_args() {
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --dry-run|-n) DRY_RUN=true ;;
+            --yes|-y)     ASSUME_YES=true ;;
+            --help|-h)    usage; exit 0 ;;
+            *)            usage; error "Unknown option: $1" ;;
+        esac
+        shift
+    done
+}
 
-# ── 1. Virtual environment ───────────────────────────────────
-if [[ -d "venv" ]]; then
-    log "Removing venv..."
-    rm -rf venv
-    log "venv removed."
-else
-    log "No venv found — skipping."
-fi
+size_of() { du -sh "$1" 2>/dev/null | cut -f1; }
 
-# Remove pyenv local version pin
-if [[ -f ".python-version" ]]; then
-    rm -f .python-version
-    log ".python-version removed."
-fi
-
-# ── 2. HuggingFace model cache ───────────────────────────────
-HF_CACHE="$HOME/.cache/huggingface/hub"
-MODELS=(
-    "models--Systran--faster-whisper-base"
-    "models--Systran--faster-whisper-large-v3"
-    "models--Systran--faster-whisper-large-v3-turbo"
-    "models--m-a-p--MERT-v1-330M"
-    "models--mtg-upf--discogs-maest-30s-pw-129e"
-    "models--MIT--ast-finetuned-audioset-10-10-0.4593"
-    # legacy — only present if you ran an older version of the tester
-    "models--facebook--musicgen-melody"
-    "models--facebook--musicgen-small"
-    "models--facebook--musicgen-large"
-    "models--laion--larger_clap_music"
-    "models--dima806--music_genres_classification"
-)
-
-echo ""
-log "Checking HuggingFace model cache..."
-found_any=false
-for model in "${MODELS[@]}"; do
-    model_path="$HF_CACHE/$model"
-    if [[ -d "$model_path" ]]; then
-        size=$(du -sh "$model_path" 2>/dev/null | cut -f1)
-        echo "    $model  ($size)"
-        found_any=true
+# remove_paths "question" PATH...: confirm once, then delete each path.
+# In dry-run mode only reports what would go.
+remove_paths() {
+    local question="$1" path
+    shift
+    if $DRY_RUN; then
+        for path in "$@"; do log "[dry-run] would remove $path"; done
+        return 0
     fi
-done
+    confirm "$question" || { log "Kept."; return 1; }
+    for path in "$@"; do
+        rm -rf -- "$path"
+        REMOVED+=("$path")
+        log "Removed $path"
+    done
+}
 
-if $found_any; then
+# ── 1. Project environment ───────────────────────────────────
+clean_project_env() {
+    local targets=()
+    if [[ -f "$VENV_DIR/pyvenv.cfg" ]]; then
+        targets+=("$PWD/$VENV_DIR")
+        log "Found $PWD/$VENV_DIR ($(size_of "$VENV_DIR"))"
+    elif [[ -e "$VENV_DIR" ]]; then
+        warn "$PWD/$VENV_DIR is not a virtualenv, leaving it alone."
+    fi
+    if [[ "$(cat .python-version 2>/dev/null || true)" == "$PYTHON_VERSION" ]]; then
+        targets+=("$PWD/.python-version")
+        log "Found $PWD/.python-version ($PYTHON_VERSION)"
+    fi
+    if [[ ${#targets[@]} -eq 0 ]]; then
+        log "No venv or .python-version pin found, skipping."
+        return 0
+    fi
+    if remove_paths "Remove the virtualenv and Python pin above?" "${targets[@]}" && ! $DRY_RUN; then
+        forget_state venv
+        forget_state python_version_file
+    fi
+}
+
+# ── 2. Model caches ──────────────────────────────────────────
+clean_models() {
+    local hub ckpt_dir repo dir name targets=()
+    hub="$(hf_hub_cache)"
+    ckpt_dir="$(torch_hub_checkpoints)"
+    log "Hugging Face cache: $hub"
+    log "torch.hub cache:    $ckpt_dir"
+    for repo in "${HF_MODEL_REPOS[@]}"; do
+        dir="$(hf_repo_dir "$repo")"
+        if [[ -d "$hub/$dir" ]]; then
+            targets+=("$hub/$dir")
+            log "Found $repo ($(size_of "$hub/$dir"))"
+        fi
+        if [[ -d "$hub/.locks/$dir" ]]; then targets+=("$hub/.locks/$dir"); fi
+    done
+    for name in "${MAEST_CHECKPOINTS[@]}"; do
+        if [[ -f "$ckpt_dir/$name" ]]; then
+            targets+=("$ckpt_dir/$name")
+            log "Found $name ($(size_of "$ckpt_dir/$name"))"
+        fi
+    done
+    if [[ ${#targets[@]} -eq 0 ]]; then
+        log "No cached tester models found, skipping."
+        return 0
+    fi
+    remove_paths "Remove these models? Other projects sharing the cache will re-download them." \
+        "${targets[@]}" || true
+}
+
+# ── 3. pyenv Python (only if setup.sh installed it) ──────────
+clean_python() {
+    local prefix
+    prefix="$(pyenv_python_prefix)"
+    if ! grep -qxF "pyenv_python=$PYTHON_VERSION" "$SETUP_STATE_FILE" 2>/dev/null; then
+        log "pyenv Python $PYTHON_VERSION was not installed by setup.sh, leaving it alone."
+        return 0
+    fi
+    if [[ ! -d "$prefix" ]]; then
+        forget_state pyenv_python
+        return 0
+    fi
+    log "Found pyenv Python $PYTHON_VERSION, installed by setup.sh ($(size_of "$prefix"))"
+    if $DRY_RUN; then
+        log "[dry-run] would run: pyenv uninstall -f $PYTHON_VERSION"
+        return 0
+    fi
+    if confirm "Uninstall pyenv Python $PYTHON_VERSION? Only if nothing else uses it."; then
+        pyenv uninstall -f "$PYTHON_VERSION"
+        REMOVED+=("$prefix")
+        forget_state pyenv_python
+        log "Uninstalled Python $PYTHON_VERSION."
+    else
+        log "Kept."
+    fi
+}
+
+# forget_state KEY: drop KEY's lines from the state file; delete it once empty.
+forget_state() {
+    local remaining
+    [[ -f "$SETUP_STATE_FILE" ]] || return 0
+    remaining="$(grep -v "^$1=" "$SETUP_STATE_FILE" || true)"
+    if [[ -z "$remaining" ]]; then
+        rm -f -- "$SETUP_STATE_FILE"
+    else
+        printf '%s\n' "$remaining" > "$SETUP_STATE_FILE"
+    fi
+}
+
+report_brew_packages() {
+    local pkgs
+    pkgs="$(sed -n 's/^brew_package=//p' "$SETUP_STATE_FILE" 2>/dev/null | tr '\n' ' ')"
+    if [[ -n "$pkgs" ]]; then
+        log "setup.sh installed these Homebrew packages, left in place: $pkgs"
+    fi
+}
+
+summary() {
+    local path
     echo ""
-    if confirm "Remove the above models from HuggingFace cache?"; then
-        for model in "${MODELS[@]}"; do
-            model_path="$HF_CACHE/$model"
-            if [[ -d "$model_path" ]]; then
-                rm -rf "$model_path"
-                log "$model removed."
-            fi
-        done
+    if $DRY_RUN; then
+        log "Dry run: nothing was removed."
+    elif [[ ${#REMOVED[@]} -eq 0 ]]; then
+        log "Nothing was removed."
     else
-        log "Model cache kept."
+        log "Removed:"
+        for path in "${REMOVED[@]}"; do echo "    $path"; done
     fi
-else
-    log "No cached models found — skipping."
-fi
+    log "Run ./setup.sh to reinstall."
+}
 
-# ── 3. pyenv Python 3.11.9 ───────────────────────────────────
-PYENV_PYTHON="$HOME/.pyenv/versions/3.11.9"
-echo ""
-if [[ -d "$PYENV_PYTHON" ]]; then
-    size=$(du -sh "$PYENV_PYTHON" 2>/dev/null | cut -f1)
-    if confirm "Remove pyenv Python 3.11.9 ($size)? Only do this if nothing else uses it."; then
-        rm -rf "$PYENV_PYTHON"
-        log "Python 3.11.9 removed."
-    else
-        log "Python 3.11.9 kept."
-    fi
-else
-    log "No pyenv Python 3.11.9 found — skipping."
-fi
+main() {
+    parse_args "$@"
+    printf '\n%b  Music Perturbation Tester: Cleanup%b\n\n' "$RED" "$NC"
+    clean_project_env
+    echo ""
+    clean_models
+    echo ""
+    clean_python
+    report_brew_packages
+    summary
+}
 
-# ── Done ─────────────────────────────────────────────────────
-echo ""
-log "Cleanup complete. Run ./setup.sh to reinstall."
-echo ""
+main "$@"

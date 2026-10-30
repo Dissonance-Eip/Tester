@@ -1,144 +1,234 @@
 #!/bin/bash
-
 # ============================================================
 # Music Perturbation Tester - Setup Script
-# No prerequisites required — installs everything from scratch.
+# Installs everything from scratch. Safe to re-run: steps that are
+# already done are skipped. Never edits shell rc files without asking.
+#
+# Usage: ./setup.sh [--yes]
+#   --yes   answer yes to every prompt (rebuilding a venv on the wrong
+#           Python, adding Homebrew to your login shell file)
 # ============================================================
+set -euo pipefail
+cd "$(dirname "$0")"
 
-GREEN='\033[0;32m'
-RED='\033[0;31m'
-YELLOW='\033[1;33m'
-NC='\033[0m'
+# shellcheck source=scripts/env.sh
+source scripts/env.sh
+LOG_TAG="SETUP"
+ASSUME_YES=false
 
-log()   { echo -e "${GREEN}[SETUP]${NC} $1"; }
-warn()  { echo -e "${YELLOW}[WARN]${NC}  $1"; }
-error() { echo -e "${RED}[ERROR]${NC} $1"; exit 1; }
+BREW_PKGS=(ffmpeg pkg-config pyenv openssl readline sqlite3 xz zlib)
+
+usage() {
+    echo "Usage: ./setup.sh [--yes]"
+    echo "  --yes   answer yes to every prompt"
+}
+
+parse_args() {
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --yes|-y)  ASSUME_YES=true ;;
+            --help|-h) usage; exit 0 ;;
+            *)         usage; error "Unknown option: $1" ;;
+        esac
+        shift
+    done
+}
+
+# record_state KEY VALUE: note something setup created. Write-once per line,
+# so a later run never overwrites what an earlier run recorded.
+record_state() {
+    local line="$1=$2"
+    if ! grep -qxF "$line" "$SETUP_STATE_FILE" 2>/dev/null; then
+        printf '%s\n' "$line" >> "$SETUP_STATE_FILE"
+    fi
+}
 
 # ── 0. System check ──────────────────────────────────────────
-log "Checking system..."
-[[ "$(uname)"    != "Darwin" ]] && error "macOS only."
-[[ "$(uname -m)" != "arm64"  ]] && error "Apple Silicon (M1/M2/M3) required."
-log "macOS Apple Silicon."
+check_system() {
+    log "Checking system..."
+    if [[ "$(uname)" != "Darwin" ]]; then error "macOS only."; fi
+    if [[ "$(uname -m)" != "arm64" ]]; then error "Apple Silicon (M1/M2/M3/M4) required."; fi
+    log "macOS Apple Silicon."
+}
 
 # ── 1. Xcode Command Line Tools ──────────────────────────────
-log "Checking Xcode Command Line Tools..."
-if ! xcode-select -p &>/dev/null; then
-    warn "Xcode Command Line Tools not found."
-    warn "A dialog will appear — click 'Install' and wait for it to finish, then press Enter here."
-    xcode-select --install 2>/dev/null || true
-    read -r -p "  Press Enter once the Xcode CLT installation has completed... "
-    xcode-select -p &>/dev/null || error "Xcode Command Line Tools still not found. Re-run after installing."
-fi
-log "Xcode Command Line Tools ready."
+ensure_xcode_clt() {
+    log "Checking Xcode Command Line Tools..."
+    if ! xcode-select -p >/dev/null 2>&1; then
+        warn "Xcode Command Line Tools not found."
+        warn "A dialog will appear: click 'Install', wait for it to finish, then press Enter here."
+        xcode-select --install 2>/dev/null || true
+        read -r -p "  Press Enter once the Xcode CLT installation has completed... " || true
+        xcode-select -p >/dev/null 2>&1 || error "Xcode Command Line Tools still not found. Re-run after installing."
+    fi
+    log "Xcode Command Line Tools ready."
+}
 
 # ── 2. Homebrew ───────────────────────────────────────────────
-log "Checking Homebrew..."
-if ! command -v brew &>/dev/null && [[ ! -x /opt/homebrew/bin/brew ]]; then
-    warn "Homebrew not found. Installing..."
-    NONINTERACTIVE=1 /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)" \
-        || error "Homebrew install failed."
-fi
-# Ensure Homebrew is in PATH for this session and future shells
-if ! command -v brew &>/dev/null; then
-    eval "$(/opt/homebrew/bin/brew shellenv)"
-fi
-if ! grep -q "brew shellenv" ~/.zprofile 2>/dev/null; then
-    echo 'eval "$(/opt/homebrew/bin/brew shellenv)"' >> ~/.zprofile
-fi
-log "Homebrew ready."
+login_shell_file() {
+    case "$(basename "${SHELL:-}")" in
+        zsh)  printf '%s\n' "$HOME/.zprofile" ;;
+        bash) printf '%s\n' "$HOME/.bash_profile" ;;
+        *)    printf '\n' ;;
+    esac
+}
+
+# Homebrew wasn't on PATH: offer (default No) to add it to the login shell file.
+offer_brew_on_path() {
+    local rc_file line
+    rc_file="$(login_shell_file)"
+    # Single quotes on purpose: the line is written literally, expanded at login.
+    # shellcheck disable=SC2016
+    line='eval "$(/opt/homebrew/bin/brew shellenv)"'
+    if [[ -n "$rc_file" ]] && grep -qF "brew shellenv" "$rc_file" 2>/dev/null; then
+        return 0
+    fi
+    if [[ -n "$rc_file" ]] && confirm "Add Homebrew to your PATH in $rc_file?"; then
+        printf '\n# Homebrew\n%s\n' "$line" >> "$rc_file"
+        log "Added Homebrew to $rc_file."
+    else
+        warn "Homebrew is not on your PATH in new shells. To add it, put this in your login shell file:"
+        warn "  $line"
+    fi
+}
+
+ensure_homebrew() {
+    log "Checking Homebrew..."
+    if ! command -v brew >/dev/null 2>&1 && [[ ! -x /opt/homebrew/bin/brew ]]; then
+        warn "Homebrew not found. Installing..."
+        NONINTERACTIVE=1 /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)" \
+            || error "Homebrew install failed."
+    fi
+    if ! command -v brew >/dev/null 2>&1; then
+        eval "$(/opt/homebrew/bin/brew shellenv)"
+        offer_brew_on_path
+    fi
+    log "Homebrew ready."
+}
 
 # ── 3. Core system packages ───────────────────────────────────
-log "Installing system packages..."
-BREW_PKGS=(ffmpeg pkg-config pyenv openssl readline sqlite3 xz zlib)
-for pkg in "${BREW_PKGS[@]}"; do
-    if ! brew list --formula "$pkg" &>/dev/null; then
-        log "  Installing $pkg..."
-        brew install "$pkg" || error "Failed to install $pkg."
+ensure_brew_packages() {
+    local pkg
+    log "Checking system packages..."
+    for pkg in "${BREW_PKGS[@]}"; do
+        if ! brew list --formula "$pkg" >/dev/null 2>&1; then
+            log "  Installing $pkg..."
+            brew install "$pkg" || error "Failed to install $pkg."
+            record_state brew_package "$pkg"
+        fi
+    done
+    log "System packages ready."
+}
+
+# Point compilers at Homebrew's libraries, once, for both the pyenv Python
+# build (ssl, sqlite, readline, lzma) and any C extension pip builds.
+export_brew_build_flags() {
+    local prefix lib ldflags="" cppflags="" pkgconfig=""
+    prefix="$(brew --prefix)"
+    for lib in openssl readline sqlite3 xz zlib; do
+        ldflags+=" -L$prefix/opt/$lib/lib"
+        cppflags+=" -I$prefix/opt/$lib/include"
+        pkgconfig+="$prefix/opt/$lib/lib/pkgconfig:"
+    done
+    export LDFLAGS="${ldflags# } -L$prefix/lib"
+    export CPPFLAGS="${cppflags# } -I$prefix/include"
+    export PKG_CONFIG_PATH="${pkgconfig}$prefix/lib/pkgconfig:$prefix/share/pkgconfig"
+}
+
+# ── 4. pyenv + pinned Python ─────────────────────────────────
+ensure_python() {
+    local prefix
+    export PYENV_ROOT="${PYENV_ROOT:-$HOME/.pyenv}"
+    prefix="$(pyenv_python_prefix)"
+
+    log "Checking Python $PYTHON_VERSION..."
+    if [[ ! -x "$prefix/bin/python3" ]]; then
+        warn "Installing Python $PYTHON_VERSION (compiling from source, a few minutes)..."
+        pyenv install --skip-existing "$PYTHON_VERSION" || error "Python $PYTHON_VERSION build failed."
+        record_state pyenv_python "$PYTHON_VERSION"
     fi
-done
-log "System packages ready."
 
-# ── 4. pyenv + Python 3.11.9 ─────────────────────────────────
-export PYENV_ROOT="$HOME/.pyenv"
-export PATH="$PYENV_ROOT/bin:$PATH"
-eval "$(pyenv init -)"
+    if [[ "$(cat .python-version 2>/dev/null || true)" != "$PYTHON_VERSION" ]]; then
+        if [[ ! -e .python-version ]]; then record_state python_version_file .python-version; fi
+        pyenv local "$PYTHON_VERSION"
+    fi
 
-if ! grep -q "pyenv init" ~/.zshrc 2>/dev/null; then
-    {
-        echo ''
-        echo '# pyenv'
-        echo 'export PYENV_ROOT="$HOME/.pyenv"'
-        echo 'export PATH="$PYENV_ROOT/bin:$PATH"'
-        echo 'eval "$(pyenv init -)"'
-    } >> ~/.zshrc
-fi
-
-REQUIRED_PYTHON="3.11.9"
-log "Checking Python $REQUIRED_PYTHON..."
-if ! pyenv versions 2>/dev/null | grep -q "$REQUIRED_PYTHON"; then
-    warn "Installing Python $REQUIRED_PYTHON (compiling from source — a few minutes)..."
-
-    # Point the compiler at Homebrew's OpenSSL/readline/etc. so Python
-    # gets a full-featured build (ssl, sqlite, readline, lzma all work).
-    BREW_PREFIX="$(brew --prefix)"
-    export LDFLAGS="-L$BREW_PREFIX/opt/openssl/lib -L$BREW_PREFIX/opt/readline/lib -L$BREW_PREFIX/opt/sqlite3/lib -L$BREW_PREFIX/opt/xz/lib -L$BREW_PREFIX/opt/zlib/lib"
-    export CPPFLAGS="-I$BREW_PREFIX/opt/openssl/include -I$BREW_PREFIX/opt/readline/include -I$BREW_PREFIX/opt/sqlite3/include -I$BREW_PREFIX/opt/xz/include -I$BREW_PREFIX/opt/zlib/include"
-    export PKG_CONFIG_PATH="$BREW_PREFIX/opt/openssl/lib/pkgconfig:$BREW_PREFIX/opt/readline/lib/pkgconfig:$BREW_PREFIX/opt/sqlite3/lib/pkgconfig:$BREW_PREFIX/opt/xz/lib/pkgconfig:$BREW_PREFIX/opt/zlib/lib/pkgconfig:$BREW_PREFIX/lib/pkgconfig"
-
-    pyenv install "$REQUIRED_PYTHON" || error "Python $REQUIRED_PYTHON build failed."
-fi
-pyenv local "$REQUIRED_PYTHON"
-PYTHON="$(pyenv which python3)"
-log "Python $REQUIRED_PYTHON at $PYTHON."
+    PYTHON="$prefix/bin/python3"
+    local found
+    found="$(python_version_of "$PYTHON")"
+    if [[ "$found" != "$PYTHON_VERSION" ]]; then
+        error "Expected Python $PYTHON_VERSION at $PYTHON, found '${found:-nothing}'."
+    fi
+    log "Python $PYTHON_VERSION at $PYTHON."
+}
 
 # ── 5. Virtual environment ───────────────────────────────────
-log "Setting up virtual environment..."
-if [[ -d "venv" ]]; then
-    warn "venv exists — rebuilding with Python $REQUIRED_PYTHON..."
-    rm -rf venv
-fi
-"$PYTHON" -m venv venv
-source venv/bin/activate
-log "venv ready."
+ensure_venv() {
+    local found
+    log "Checking virtual environment..."
+    if [[ -e "$VENV_DIR" && ! -f "$VENV_DIR/pyvenv.cfg" ]]; then
+        error "$VENV_DIR/ exists but is not a virtualenv. Move it away and re-run."
+    fi
+    if [[ -f "$VENV_DIR/pyvenv.cfg" ]]; then
+        found="$(python_version_of "$VENV_DIR/bin/python")"
+        if [[ "$found" == "$PYTHON_VERSION" ]]; then
+            log "Reusing $VENV_DIR/ (Python $found)."
+            return 0
+        fi
+        warn "$VENV_DIR/ uses Python '${found:-unknown}', expected $PYTHON_VERSION."
+        confirm "Delete $VENV_DIR/ and rebuild it?" || error "Keeping the old $VENV_DIR/. Remove it yourself and re-run."
+        rm -rf -- "$VENV_DIR"
+    fi
+    "$PYTHON" -m venv "$VENV_DIR"
+    record_state venv "$VENV_DIR"
+    log "Created $VENV_DIR/."
+}
 
 # ── 6. Python dependencies ───────────────────────────────────
-log "Installing Python dependencies..."
-pip install --upgrade pip --quiet
+install_dependencies() {
+    local venv_python="$VENV_DIR/bin/python"
+    log "Installing pinned dependencies from requirements.txt (torch included)..."
+    "$venv_python" -m pip install --upgrade pip --quiet
+    "$venv_python" -m pip install --prefer-binary -r requirements.txt \
+        || error "Failed to install from requirements.txt."
+    log "Dependencies ready."
+}
 
-# Expose Homebrew headers/libs for any C extensions that build from source
-BREW_PREFIX="$(brew --prefix)"
-export PKG_CONFIG_PATH="$BREW_PREFIX/lib/pkgconfig:$BREW_PREFIX/share/pkgconfig"
-export LDFLAGS="-L$BREW_PREFIX/lib"
-export CPPFLAGS="-I$BREW_PREFIX/include"
-
-# requirements.txt is the full lock (torch included), compiled from requirements.in.
-log "Installing pinned dependencies..."
-pip install --prefer-binary -r requirements.txt || error "Failed to install from requirements.txt."
-
-log "Dependencies ready."
-
-# ── 7. MPS fallback ──────────────────────────────────────────
-log "Setting PYTORCH_ENABLE_MPS_FALLBACK..."
-if ! grep -q "PYTORCH_ENABLE_MPS_FALLBACK" ~/.zshrc 2>/dev/null; then
-    {
-        echo ''
-        echo '# PyTorch MPS fallback for Apple Silicon'
-        echo 'export PYTORCH_ENABLE_MPS_FALLBACK=1'
-    } >> ~/.zshrc
-fi
-export PYTORCH_ENABLE_MPS_FALLBACK=1
-log "MPS fallback ready."
+# ── 7. MPS fallback (in the venv, not your shell rc) ─────────
+enable_mps_fallback() {
+    local activate="$VENV_DIR/bin/activate"
+    if ! grep -qF "PYTORCH_ENABLE_MPS_FALLBACK" "$activate"; then
+        printf '\n# PyTorch MPS fallback for Apple Silicon (added by setup.sh)\nexport PYTORCH_ENABLE_MPS_FALLBACK=1\n' >> "$activate"
+    fi
+    export PYTORCH_ENABLE_MPS_FALLBACK=1
+    log "PYTORCH_ENABLE_MPS_FALLBACK=1 is set by $activate."
+}
 
 # ── 8. Sanity check ──────────────────────────────────────────
-log "Running sanity check..."
-python3 test.py || error "Sanity check failed — see above for details."
+sanity_check() {
+    log "Running sanity check..."
+    "$VENV_DIR/bin/python" test.py || error "Sanity check failed, see above for details."
+}
 
-# ── Done ──────────────────────────────────────────────────────
-echo ""
-echo -e "${GREEN}============================================${NC}"
-echo -e "${GREEN}  All done! Ready to test perturbations.   ${NC}"
-echo -e "${GREEN}============================================${NC}"
-echo ""
-echo "  Activate env:  source venv/bin/activate"
-echo "  Run tester:    python3 run.py original.wav perturbed.wav"
-echo ""
+main() {
+    parse_args "$@"
+    check_system
+    ensure_xcode_clt
+    ensure_homebrew
+    ensure_brew_packages
+    export_brew_build_flags
+    ensure_python
+    ensure_venv
+    install_dependencies
+    enable_mps_fallback
+    sanity_check
+
+    printf '\n%b============================================%b\n' "$GREEN" "$NC"
+    printf '%b  All done! Ready to test perturbations.   %b\n' "$GREEN" "$NC"
+    printf '%b============================================%b\n\n' "$GREEN" "$NC"
+    echo "  Activate env:  source $VENV_DIR/bin/activate"
+    echo "  Run tester:    python3 run.py original.wav perturbed.wav"
+    echo ""
+}
+
+main "$@"
