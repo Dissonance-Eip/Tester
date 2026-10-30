@@ -111,10 +111,8 @@ export PKG_CONFIG_PATH="$BREW_PREFIX/lib/pkgconfig:$BREW_PREFIX/share/pkgconfig"
 export LDFLAGS="-L$BREW_PREFIX/lib"
 export CPPFLAGS="-I$BREW_PREFIX/include"
 
-log "Installing torch and torchaudio..."
-pip install torch torchaudio || error "Failed to install torch/torchaudio."
-
-log "Installing remaining dependencies..."
+# requirements.txt is the full lock (torch included), compiled from requirements.in.
+log "Installing pinned dependencies..."
 pip install --prefer-binary -r requirements.txt || error "Failed to install from requirements.txt."
 
 log "Dependencies ready."

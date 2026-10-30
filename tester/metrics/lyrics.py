@@ -18,7 +18,12 @@ import re
 from typing import List
 
 from .. import models
-from ..config import WHISPER_MAX_SECONDS
+from ..config import (
+    WHISPER_CONDITION_ON_PREVIOUS_TEXT,
+    WHISPER_LANGUAGE,
+    WHISPER_MAX_SECONDS,
+    WHISPER_TEMPERATURE,
+)
 
 _APOSTROPHES = re.compile(r"['\u2019]")
 _PUNCTUATION = re.compile(r"[^\w\s]|_")
@@ -27,17 +32,20 @@ _PUNCTUATION = re.compile(r"[^\w\s]|_")
 def transcribe(audio_path: str) -> str:
     """Transcribe audio to a single space-joined string.
 
-    Uses deterministic greedy decoding (``beam_size=1``, ``temperature=0``:
-    no sampling fallback, so the same audio always gives the same text and
-    an identical file scores 0 confusion), VAD filtering (skips long
-    instrumental sections), and only the first ``WHISPER_MAX_SECONDS``
-    of the file — typically the first verse and chorus.
+    Uses deterministic greedy decoding (``beam_size=1`` and the fixed
+    language, temperature and conditioning from ``config``: no sampling
+    fallback, so the same audio always gives the same text and an identical
+    file scores 0 confusion), VAD filtering (skips long instrumental
+    sections), and only the first ``WHISPER_MAX_SECONDS`` of the file —
+    typically the first verse and chorus.
     """
     model = models.whisper()
     segments, _ = model.transcribe(
         audio_path,
         beam_size=1,
-        temperature=0.0,
+        language=WHISPER_LANGUAGE,
+        temperature=WHISPER_TEMPERATURE,
+        condition_on_previous_text=WHISPER_CONDITION_ON_PREVIOUS_TEXT,
         vad_filter=True,
         clip_timestamps=[0, WHISPER_MAX_SECONDS],
     )

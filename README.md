@@ -107,6 +107,20 @@ These are cached in `~/.cache/huggingface/` after the first run:
 
 Total ~3.3 GB. Set `HF_TOKEN` in your shell for faster downloads.
 
+### Reproducibility
+
+Scores only compare across runs when the stack is identical, so it is pinned:
+
+- `requirements.txt` is a full lock (torch included) compiled from
+  `requirements.in`; the regenerate command is at the top of `requirements.in`.
+  Install with `pip install -r requirements.txt` only.
+- Whisper and MERT load at fixed Hub commits (`WHISPER_REVISION`,
+  `MERT_REVISION` in `tester/config.py`). MAEST's weights are fixed by the
+  MAEST commit pinned in `requirements.in`.
+- Whisper decodes with a fixed language, `temperature=0.0` and
+  `condition_on_previous_text=False` (also in `config.py`).
+- `results.json["run"]` records the package versions and model revisions used.
+
 ---
 
 ## Project layout
@@ -117,7 +131,8 @@ music-perturbation-tester/
 ├── test.py                # dependency sanity check
 ├── setup.sh               # full environment installer
 ├── cleanup.sh             # remove venv + model caches
-├── requirements.txt
+├── requirements.in        # direct dependencies, exact pins (edit this)
+├── requirements.txt       # full lock compiled from requirements.in
 ├── README.md              # this file
 └── tester/                # package
     ├── __init__.py
