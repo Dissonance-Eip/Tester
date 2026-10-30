@@ -31,39 +31,55 @@ _ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, _ROOT)
 warnings.filterwarnings("ignore", message=".*output with one or more elements was resized.*")
 
-from tester.audio import load, to_mono  # noqa: E402
+from tester.audio import load_mono  # noqa: E402
+from tester.config import MAX_AUDIO_SECONDS, SNR_GOOD  # noqa: E402
 from attack.optimizer import attack_universal  # noqa: E402
 from attack.targets import MertTarget  # noqa: E402
 
 
-def _segment(path: str, seconds: int):
-    """Load a song as a mono segment of exactly ``seconds`` (truncated)."""
-    waveform, sr = load(path)
-    mono = to_mono(waveform)
-    n = seconds * sr
-    return mono[:n], sr
+def load_songs(train, test, seconds):
+    """Load each song once, as mono, keeping its first ``seconds``.
+
+    Every song must share one sample rate: the shared δ is added sample by
+    sample, so mixing rates would silently misalign it. Training segments
+    are truncated to the shortest one.
+
+    Returns:
+        ``(train_segments, test_segment, sample_rate)``.
+
+    Raises:
+        ValueError: if the songs do not all have the same sample rate.
+    """
+    segs, sr = [], None
+    for path in [*train, test]:
+        seg, rate = load_mono(path, seconds=seconds)
+        if sr is not None and rate != sr:
+            raise ValueError(f"{path} has sample rate {rate} Hz, expected {sr} Hz "
+                             "like the first training song; resample it first")
+        sr = rate
+        segs.append(seg)
+    *train_segs, test_seg = segs
+    n = min(s.shape[-1] for s in train_segs)
+    return [s[:n] for s in train_segs], test_seg, sr
 
 
 def main() -> int:
     ap = argparse.ArgumentParser(description="Universal adversarial perturbation (UAP) trainer")
     ap.add_argument("--train", nargs="+", required=True, help="Training song WAVs (2+)")
     ap.add_argument("--test", required=True, help="Held-out song WAV (not in --train)")
-    ap.add_argument("--seconds", type=int, default=30, help="Window length per song")
+    ap.add_argument("--seconds", type=int, default=MAX_AUDIO_SECONDS, help="Window length per song")
     ap.add_argument("--iters", type=int, default=200, help="Gradient steps")
-    ap.add_argument("--snr", type=float, default=30.0, help="Avg loudness budget in dB")
+    ap.add_argument("--snr", type=float, default=SNR_GOOD, help="Avg loudness budget in dB")
     ap.add_argument("--lr", type=float, default=1e-3, help="Adam learning rate")
     args = ap.parse_args()
 
     print(f"\nLoading {len(args.train)} training songs ...")
-    segs, sr = [], None
-    for p in args.train:
-        seg, s = _segment(p, args.seconds)
-        sr = s
-        segs.append(seg)
-        print(f"  {os.path.basename(p)}  {seg.shape[-1] / s:.1f}s")
-    # All segments must share length; truncate to the shortest.
-    n = min(s.shape[-1] for s in segs)
-    segs = [s[:n] for s in segs]
+    try:
+        segs, test_seg, sr = load_songs(args.train, args.test, args.seconds)
+    except ValueError as exc:
+        ap.error(str(exc))
+    for p, seg in zip(args.train, segs):
+        print(f"  {os.path.basename(p)}  {seg.shape[-1] / sr:.1f}s")
 
     print("\nLoading MERT ...")
     target = MertTarget()
@@ -73,7 +89,6 @@ def main() -> int:
                              target_snr_db=args.snr)
 
     # Held-out validation — apply δ to a song it never saw.
-    test_seg, _ = _segment(args.test, args.seconds)
     m = min(test_seg.shape[-1], delta.shape[-1])
     clean = test_seg[:m]
     poisoned = torch.clamp(clean + delta[:m], -1.0, 1.0)

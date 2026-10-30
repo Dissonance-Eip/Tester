@@ -9,7 +9,7 @@ your editor:
     sounds/<name>_poisoned.wav  reference + δ  → feed this to the Tester
     sounds/<name>_delta.wav     δ alone, to hear the noise on its own
 
-Common use (good defaults — inaudible, correct 30 s window, whole file):
+Common use (good defaults — inaudible, the Tester's MERT window, whole file):
 
     python3 -m attack.run_attack sounds/sound.wav
 
@@ -19,10 +19,10 @@ Then validate:
 
 Knobs (all optional):
     --iters N     gradient steps per window      (default 100)
-    --window S    attack window seconds          (default 30, matches MERT eval)
+    --window S    attack window seconds          (default MAX_AUDIO_SECONDS, MERT eval)
     --seconds S   cap total length, 0 = whole    (default 0)
-    --snr DB      loudness budget, higher=quieter(default 30)
-    --mask F      perceptual hiding strength      (default 0.15, smaller=quieter)
+    --snr DB      loudness budget, higher=quieter(default SNR_GOOD)
+    --mask F      perceptual hiding strength      (default ATTACK_MASK_SCALE, smaller=quieter)
     --flat        disable perceptual shaping (audible; for comparison only)
     --lr / --checkpoint   advanced
 """
@@ -42,9 +42,13 @@ warnings.filterwarnings("ignore", message=".*output with one or more elements wa
 _ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, _ROOT)
 
-from tester.audio import load, to_mono, trim  # noqa: E402
+from tester.audio import load_mono  # noqa: E402
+from tester.config import ATTACK_MASK_SCALE, MAX_AUDIO_SECONDS, SNR_GOOD  # noqa: E402
 from attack.optimizer import attack  # noqa: E402
 from attack.targets import MertTarget  # noqa: E402
+
+# Windows shorter than this are left unperturbed (too short for MERT's frontend).
+_MIN_WINDOW_SECONDS = 1
 
 
 def _default_stem(song: str) -> str:
@@ -57,11 +61,12 @@ def main() -> int:
     ap = argparse.ArgumentParser(description="Adversarial perturbation generator (MERT)")
     ap.add_argument("song", help="Path to the input WAV")
     ap.add_argument("--iters", type=int, default=100, help="Gradient steps per window")
-    ap.add_argument("--window", type=int, default=30,
-                    help="Attack window in seconds (default 30 = MERT's eval window)")
+    ap.add_argument("--window", type=int, default=MAX_AUDIO_SECONDS,
+                    help=f"Attack window in seconds (default {MAX_AUDIO_SECONDS} = MERT's eval window)")
     ap.add_argument("--seconds", type=int, default=0, help="Cap total length (0 = whole file)")
-    ap.add_argument("--snr", type=float, default=30.0, help="Loudness budget in dB (higher=quieter)")
-    ap.add_argument("--mask", type=float, default=0.15,
+    ap.add_argument("--snr", type=float, default=SNR_GOOD,
+                    help="Loudness budget in dB (higher=quieter)")
+    ap.add_argument("--mask", type=float, default=ATTACK_MASK_SCALE,
                     help="Perceptual hiding strength (smaller = quieter / more hidden)")
     ap.add_argument("--flat", action="store_true",
                     help="Disable perceptual shaping (audible; comparison only)")
@@ -78,10 +83,7 @@ def main() -> int:
     perceptual = not args.flat
 
     print(f"\nLoading {args.song} ...")
-    waveform, sr = load(args.song)
-    mono = to_mono(waveform)
-    if args.seconds > 0:
-        mono = trim(mono, sr, args.seconds)
+    mono, sr = load_mono(args.song, seconds=args.seconds if args.seconds > 0 else None)
     total = mono.shape[-1]
     print(f"  {total / sr:.1f}s mono @ {sr} Hz")
 
@@ -90,8 +92,8 @@ def main() -> int:
 
     # Attack the file in windows so δ covers every second. Each window is
     # optimised against MERT independently; the pieces concatenate into one
-    # full-length δ. The default 30 s window matches the tester's MERT eval
-    # window so the attack transfers.
+    # full-length δ. The default window is the tester's MERT eval window
+    # (MAX_AUDIO_SECONDS) so the attack transfers.
     win = args.window * sr
     n = (total + win - 1) // win
     print(f"\nAttacking {n} × {args.window}s window(s), {args.iters} iters, "
@@ -101,7 +103,7 @@ def main() -> int:
     for c in range(n):
         start, end = c * win, min((c + 1) * win, total)
         seg = mono[start:end]
-        if seg.shape[-1] < sr:  # skip <1s tail (too short for MERT frontend)
+        if seg.shape[-1] < _MIN_WINDOW_SECONDS * sr:
             parts.append(torch.zeros_like(seg))
             continue
         print(f"\n── window {c + 1}/{n}  ({start / sr:.0f}–{end / sr:.0f}s) ──")
