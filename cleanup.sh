@@ -11,7 +11,7 @@
 set -euo pipefail
 cd "$(dirname "$0")"
 
-# shellcheck source=scripts/env.sh
+# shellcheck source-path=SCRIPTDIR source=scripts/env.sh
 source scripts/env.sh
 LOG_TAG="CLEAN"
 ASSUME_YES=false
@@ -148,7 +148,8 @@ forget_state() {
 
 report_brew_packages() {
     local pkgs
-    pkgs="$(sed -n 's/^brew_package=//p' "$SETUP_STATE_FILE" 2>/dev/null | tr '\n' ' ')"
+    [[ -f "$SETUP_STATE_FILE" ]] || return 0
+    pkgs="$(sed -n 's/^brew_package=//p' "$SETUP_STATE_FILE" | tr '\n' ' ')"
     if [[ -n "$pkgs" ]]; then
         log "setup.sh installed these Homebrew packages, left in place: $pkgs"
     fi

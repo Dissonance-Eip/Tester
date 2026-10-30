@@ -11,7 +11,7 @@
 set -euo pipefail
 cd "$(dirname "$0")"
 
-# shellcheck source=scripts/env.sh
+# shellcheck source-path=SCRIPTDIR source=scripts/env.sh
 source scripts/env.sh
 LOG_TAG="SETUP"
 ASSUME_YES=false
